@@ -23,6 +23,9 @@ from object_localization.tf_utils import CustomTransformListener
 
 CAMERA_COLOR_TOPIC = '/camera/color/image_raw'
 
+import threading
+import scene_msgs.msg as scene_ros
+
 class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
     def __init__(self) -> None:
         super(ActiveLocalizerNode, self).__init__()
@@ -41,7 +44,8 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         self._window = Queue(maxsize=10)
         self._service = self.create_service(Trigger, 'active_localizer', self.handle_request, qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
 
-        self._get_scene_service = self.create_service(Trigger, 'get_scene', self.get_scene_request, qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self._start_publishing_scene_service = self.create_service(Trigger, 'start_publishing_scene', self.start_publishing_scene, qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self._stop_publishing_scene_service = self.create_service(Trigger, 'stop_publishing_scene', self.stop_publishing_scene, qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
         self.compute_scene_positions_client = self.create_client(GetScene, 'compute_object_positions', callback_group=self.callback_group)
 
         self.position_accuracy = 0.003
@@ -54,6 +58,41 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         # self._prev_img = None
         self.img_last_rec = 0.0
 
+        self.publishing_scene = True
+        spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
+        spinning_thread.start()
+        self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
+        
+        self.curr_pos = None
+
+    def publish_scene_thread(self):
+        from scene_getter.scene_lib.scene import Scene
+        from scene_getter.scene_lib.scene_object import SceneObject
+        
+        while True:
+            if self.publishing_scene and self._img is not None and self.curr_pos is not None:
+                time.sleep(1.0)
+                scene = self.compute_scene_positions_client.call(GetScene.Request(img=self._img))
+
+                scene_objects = []
+                for name,posestamped in zip(scene.names, scene.pose):
+                    pose = posestamped.pose
+                    
+                    position = self.curr_pos
+                    ori = list_2_quaternion(self.curr_ori_wxyz)
+                    home_pose = pos_quat_2_pose_st(position, ori)
+                    tfpose = self.transform(posestamped, home_pose, check_z_axis=False)
+                    
+                    objectdata = {
+                        "position":    [tfpose.pose.position.x, tfpose.pose.position.y, tfpose.pose.position.z],
+                        "orientation": [tfpose.pose.orientation.x, tfpose.pose.orientation.y, tfpose.pose.orientation.z, tfpose.pose.orientation.w],
+                        "params": "",
+                    }
+                    scene_objects.append(SceneObject.from_dict(name, objectdata))
+
+                scene = Scene(name="active_localizer_scene", objects=scene_objects)
+                self.scene_pub.publish(scene.to_ros())
+
     def curr_pose_callback(self, msg):
         self.curr_pos = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
         self.curr_ori_wxyz = [msg.pose.orientation.w, msg.pose.orientation.x, msg.pose.orientation.y, msg.pose.orientation.z]
@@ -63,9 +102,13 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         self.img_last_rec = time.time()
         self._img = img
         
-    def get_scene_request(self, req, res):
-        resp = self.compute_scene_positions_client.call(request=ComputeLocalization.Request(img=self._img))
-        return resp
+    def start_publishing_scene(self, req, res):
+        self.publishing_scene = True
+        return res
+
+    def stop_publishing_scene(self, req, res):
+        self.publishing_scene = False
+        return res
 
     def handle_request(self, req, res):
         print("Active localization started", flush=True)
@@ -151,7 +194,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
 
         
     
-    def transform(self, transformation_pose, pose):
+    def transform(self, transformation_pose, pose, check_z_axis=True):
         transform_base_2_cam = self.get_transform_camera()
 
         # if transform box is not in camera frame, remove the base_2_cam transforms
@@ -171,7 +214,8 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         pose.pose.orientation.y = pose_quat.y
 
         home_EE_height = get_remote_parameters(self, ["position_z"], server="localizer_node")[0]
-        assert home_EE_height > 0.1, f"Your template z-axis coords is below safety limit: {home_EE_height} < 0.1"
+        if check_z_axis:
+            assert home_EE_height > 0.1, f"Your template z-axis coords is below safety limit: {home_EE_height} < 0.1"
         pose.pose.position.z=home_EE_height  # Maintain same height
         return pose
 

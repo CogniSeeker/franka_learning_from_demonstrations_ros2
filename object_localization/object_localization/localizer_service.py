@@ -42,7 +42,7 @@ class LocalizationService(SpinningRosNode):
         self._service = self.create_service(ComputeLocalization, 'compute_localization', self.handle_request, callback_group=self.callback_group)
         self._service_set_localizer = self.create_service(SetTemplate, 'set_localizer', self.set_localizer, callback_group=self.callback_group)
 
-        self._service_get_scene = self.create_service(GetScene, 'compute_object_positions', self.get_scene, qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self._service_get_scene = self.create_service(GetScene, 'compute_object_positions', self.get_scene, callback_group=self.callback_group)
 
         self.create_subscription(CameraInfo, CAMERA_INFO_TOPIC, self.camera_info_callback, 5)
         time.sleep(1)
@@ -54,10 +54,12 @@ class LocalizationService(SpinningRosNode):
         
         res_names = []
         res_poses = []
-
         for template_name in all_templates:
-            with open(f"{object_localization.package_path}/cfg/{template_name}/params.yaml") as f:
-                tf_dict = yaml.safe_load(f)
+            try:
+                with open(f"{object_localization.package_path}/cfg/{template_name}/params.yaml") as f:
+                    tf_dict = yaml.safe_load(f)
+            except FileNotFoundError:
+                continue
 
             cropping = tf_dict['crop']
             depth = tf_dict['depth'] * 0.001
@@ -75,9 +77,7 @@ class LocalizationService(SpinningRosNode):
             try: # if not successful -> annotated image not exist
                 localizer.annoted_image()
             except Exception as e:
-                print(e)
-                print('Returning identity')
-                return np.identity(4)
+                continue
             
             tf_matrix = localizer.compute_full_tf_in_m()
         
@@ -89,14 +89,19 @@ class LocalizationService(SpinningRosNode):
 
             quaternion = quaternion/np.linalg.norm(quaternion)
 
-            print("Template: {template_name}", flush=True)
+            # TODO: FIX ABS TF TOWARDS THE OBJECT
+            if 'tf_eef_to_template_origin' in tf_dict:
+                ofs = [tf_dict['tf_eef_to_template_origin']['x'], tf_dict['tf_eef_to_template_origin']['y'], tf_dict['tf_eef_to_template_origin']['z']]
+                position += np.array(ofs)
+
+            print(f"Template: {template_name}", flush=True)
             res_names.append(template_name)
             print(position, flush=True)
             print(quaternion, flush=True)
             res_poses.append(PoseStamped(header=Header(), pose=Pose(position=Point(x=position[0], y=position[1], z=position[2]), orientation=Quaternion(x=quaternion[0], y=quaternion[1], z=quaternion[2], w=quaternion[3]))))
 
         res.names = res_names
-        res.poses = res_poses
+        res.pose = res_poses
         return res
 
     def set_localizer(self, req, res):

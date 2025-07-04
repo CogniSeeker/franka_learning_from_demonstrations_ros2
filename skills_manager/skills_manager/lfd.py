@@ -41,7 +41,9 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         self.set_localizer_client = self.create_client(SetTemplate, 'set_localizer', callback_group=self.callback_group)
         self.active_localizer_client = self.create_client(Trigger, 'active_localizer', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
-        self.get_scene_client = self.create_client(Trigger, 'get_scene', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self.start_publishing_scene_call = self.create_client(Trigger, 'start_publishing_scene', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self.stop_publishing_scene_call = self.create_client(Trigger, 'stop_publishing_scene', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+
 
         time.sleep(1)
 
@@ -255,3 +257,12 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         print(f"Move to start: x={goal.pose.position.x} y={goal.pose.position.y} y={goal.pose.position.z}", flush=True)
         self.go_to_pose_ik(goal)
         time.sleep(4.0) # could be deleted because go_to_pose_ik waits until finished
+    
+
+    def start_publishing_scene(self):
+        self.start_publishing_scene_call.call(Trigger.Request())
+
+    def stop_publishing_scene(self):
+        self.stop_publishing_scene_call.call(Trigger.Request())
+
+
