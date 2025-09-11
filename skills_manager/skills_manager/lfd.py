@@ -48,12 +48,19 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         time.sleep(1)
 
     def traj_rec(self, trigger=0.005):
-        self.set_stiffness(0,0,0,0,0,0,0)
+        if hasattr(self, 'input_modality') and self.input_modality == "kinesthetic":
+            self.set_stiffness(0,0,0,0,0,0,0)
+        else:
+            self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
 
         init_pos = self.curr_pos
         vel = 0 
         print("Move robot to start recording.", flush=True)
         while vel < trigger:
+            if hasattr(self, 'input_modality') and self.input_modality is not None:
+                self.input_modality.step()
+            self.r.sleep()
+
             vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
         self.recorded_traj = self.curr_pos
         self.recorded_ori_wxyz = self.curr_ori_wxyz
@@ -64,6 +71,7 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.recorded_gripper= self.grip_value
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
+        self.init_additional_flags()
      
         resized_img_gray=image_process(self.curr_image, self.ds_factor,  self.row_crop_pct_top , self.row_crop_pct_bot,
                                         self.col_crop_pct_left, self.col_crop_pct_right)
@@ -85,6 +93,10 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_img = np.r_[self.recorded_img, resized_img_gray.reshape((1, resized_img_gray.shape[0], resized_img_gray.shape[1]))]
             self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
+
+            self.update_additional_flags()
+            if hasattr(self, 'input_modality') and self.input_modality is not None:
+                self.input_modality.step()
 
             self.r.sleep()
 
@@ -207,8 +219,17 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         
         self.filename=str(file)
 
-    def localize(self, object_template_name):
+    def init_additional_flags(self):
+        pass
+    def update_additional_flags(self):
+        pass
+
+    def localize(self, object_template_name: str = ""):
         """ DRAFT """
+        if object_template_name == "":
+            print("No given object_template_name", flush=True)
+            return False
+
         if not self.set_localizer_client.wait_for_service(timeout_sec=5.0):
             raise Exception("Service not available after waiting")
         ret = self.set_localizer_client.call(SetTemplate.Request(template_name=object_template_name))

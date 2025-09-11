@@ -93,7 +93,10 @@ def get_remote_parameters(node, param_names: List[str], server="parameter_tester
         if destroy_node:
             node.destroy_node()
 
-def get_remote_parameter(node, param_name: List[str], server="parameter_tester"):
+def get_remote_parameter(node, param_name: List[str], server: str | None = None):
+    if server is None:
+        server = str(node.get_name())
+    
     return get_remote_parameters(node, [param_name], server)[0]
 
 

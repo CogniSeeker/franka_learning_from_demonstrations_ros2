@@ -3,6 +3,8 @@ import numpy as np
 from pynput.keyboard import KeyCode, Key
 from pynput.keyboard import Listener
 from panda_control.pose_transform_functions import pos_quat_2_pose_st, list_2_quaternion
+from std_msgs.msg import Float32, Bool
+
 class Feedback():
     def __init__(self):
         super(Feedback, self).__init__()
@@ -146,14 +148,12 @@ class Feedback():
 class FrankaOnPress():
     def __init__(self):
         super(FrankaOnPress, self).__init__()
-        assert HAS_ROS, "ROS couldn't be imported"
-        if not is_roscore_running(): return
         
-        self.button_x_subscriber = rospy.Subscriber('/franka_buttons/x', Float32, self.cb_x, queue_size=10)
-        self.button_y_subscriber = rospy.Subscriber('/franka_buttons/y', Float32, self.cb_y, queue_size=10)
-        self.button_circle_subscriber = rospy.Subscriber('/franka_buttons/circle', Bool, self.cb_circle, queue_size=10)
-        self.button_cross_subscriber = rospy.Subscriber('/franka_buttons/cross', Bool, self.cb_cross, queue_size=10)
-        self.button_check_subscriber = rospy.Subscriber('/franka_buttons/check', Bool, self.cb_check, queue_size=10)
+        self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
+        self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
+        self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
+        self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
+        self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
 
         self.x_positive_press_act = False
         self.x_negative_press_act = False
@@ -292,14 +292,16 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
         self.safe_flag = 0
         self.novelty_flag = 0
         self.recovery_phase = -1.
+        self.switch_flag = None
 
         try:
             self.button_press_mode
         except AttributeError:
             self.button_press_mode = button_press_mode
 
-
     def _on_press(self, key):
+        if not hasattr(self,'button_press_mode'): return # init not finished
+
         if self.button_press_mode == 'toggle':
             self._on_press_toggle(key)
         elif self.button_press_mode == 'momentary':
@@ -307,6 +309,8 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
         else: raise Exception()
 
     def _on_release(self, key):
+        if not hasattr(self,'button_press_mode'): return # init not finished
+
         if self.button_press_mode == 'toggle':
             pass
         elif self.button_press_mode == 'momentary':
@@ -391,7 +395,7 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
 
 
 if __name__ == '__main__':
-    rospy.init_node('listener', anonymous=True)
+    rclpy.init()
     # fb = FrankaButtons()
     
     # raf = RiskAwareFeedback(button_press_mode="toggle")

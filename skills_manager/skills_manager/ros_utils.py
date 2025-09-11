@@ -6,6 +6,8 @@ import threading
 from rclpy.callback_groups import ReentrantCallbackGroup
 import numpy as np
 
+from skills_manager.ros_param_manager import get_remote_parameter
+
 class SpinningRosNode(Node):
     def __init__(self):
         super(SpinningRosNode, self).__init__(f"panda_node_{np.random.randint(100000)}") # node name replaced by launch description
@@ -15,3 +17,11 @@ class SpinningRosNode(Node):
         spinning_thread.start()
 
         self.callback_group = ReentrantCallbackGroup()
+
+        self.get_remote_parameter = get_remote_parameter
+
+    def declare_parameter_and_get(self, name, default_value):
+        self.declare_parameter(name, default_value)
+        return self.get_remote_parameter(self, name)
+
+

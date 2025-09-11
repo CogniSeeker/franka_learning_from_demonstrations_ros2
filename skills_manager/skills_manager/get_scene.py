@@ -9,7 +9,6 @@ ros2 topic echo /scene
 """
 from skills_manager.lfd import LfD
 from scene_getter.scene_getting import SceneGetter
-from pointing_object_selection.pointing_experiment.utils import print_table_scene
 import rclpy, time
 
 class ExtLfD(SceneGetter, LfD):
@@ -25,7 +24,7 @@ def main():
     while rclpy.ok():
         time.sleep(1.0)
         print_scene = lfd.scene.copy()
-        print_table_scene(print_scene, [], [0.,0.,0.])
+        print_scene.print_table_scene([], [0.,0.,0.])
         
 
 if __name__ == '__main__':
