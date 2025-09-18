@@ -48,20 +48,21 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         time.sleep(1)
 
     def traj_rec(self, trigger=0.005):
-        if hasattr(self, 'input_modality') and self.input_modality == "kinesthetic":
-            self.set_stiffness(0,0,0,0,0,0,0)
-        else:
-            self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
+        self.set_stiffness(0,0,0,0,0,0,0)
 
         init_pos = self.curr_pos
         vel = 0 
+        init_feedback = self.feedback
         print("Move robot to start recording.", flush=True)
         while vel < trigger:
-            if hasattr(self, 'input_modality') and self.input_modality is not None:
-                self.input_modality.step()
             self.r.sleep()
-
+            is_teaching_kinesthetic = sum(self.feedback - init_feedback) == 0  # feedback changed -> not kinesthetic teaching
             vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
+
+        if not is_teaching_kinesthetic:
+            print("Control externally.", flush=True)
+            self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
+
         self.recorded_traj = self.curr_pos
         self.recorded_ori_wxyz = self.curr_ori_wxyz
         if self.gripper_width < self.grip_open_width * 0.9:
@@ -95,9 +96,6 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
 
             self.update_additional_flags()
-            if hasattr(self, 'input_modality') and self.input_modality is not None:
-                self.input_modality.step()
-
             self.r.sleep()
 
         goal = PoseStamped()

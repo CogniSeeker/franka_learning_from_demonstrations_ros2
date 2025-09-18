@@ -1,159 +1,36 @@
+from __future__ import annotations
 import rclpy
 import numpy as np
 from pynput.keyboard import KeyCode, Key
 from pynput.keyboard import Listener
 from panda_control.pose_transform_functions import pos_quat_2_pose_st, list_2_quaternion
 from std_msgs.msg import Float32, Bool
+import time
+from dataclasses import dataclass
 
-class Feedback():
-    def __init__(self):
-        super(Feedback, self).__init__()
-        self.feedback=np.zeros(4)
-        self.feedback_gain=0.002
-        self.faster_counter=0
-        self.length_scale = 0.005
-        self.correction_window = 300
-        self.img_feedback_flag = 0
-        self.spiral_flag = 0
-        self.img_feedback_correction = 0
-        self.gripper_feedback_correction = 0
-        self.spiral_feedback_correction=0
-        self.pause=False
+from nocode_robot_programming.joystick import JoystickConnector
+from nocode_robot_programming.gestures import TeleoperationByDrawing
 
-        self.listener = Listener(on_press=self._on_press, on_release=self._on_release)
-        self.listener.start()
+import threading
 
-    def _on_release(self, key):
-        pass
+class KeyboardConnector():
+    def keyboard_start(self):
+        self.key_thr = threading.Thread(target=self.keyboard_start_thread, daemon=True)
+        self.key_thr.start()
 
-    def _on_press(self, key):
-        # self.get_logger().info(f"Event happened, user pressed {key}")
-        # This function runs on the background and checks if a keyboard key was pressed
-        if key == KeyCode.from_char('e'):
-            self.end = True
-        # Feedback for translate forward/backward
-        if key == KeyCode.from_char('w'):
-            self.feedback[0] = self.feedback_gain
-        if key == KeyCode.from_char('s'):
-            self.feedback[0] = -self.feedback_gain
-        # Feedback for translate left/right
-        if key == KeyCode.from_char('a'):
-            self.feedback[1] = self.feedback_gain
-        if key == KeyCode.from_char('d'):
-            self.feedback[1] = -self.feedback_gain
-        # Feedback for translate up/down
-        if key == KeyCode.from_char('u'):
-            self.feedback[2] = self.feedback_gain
-        if key == KeyCode.from_char('j'):
-            self.feedback[2] = -self.feedback_gain
-        # Close/open gripper
-        if key == KeyCode.from_char('c'):
-            try:
-                self.grip_value = 0
-                self.grasp_gripper(self.grip_value)
-                self.gripper_feedback_correction = 1
-            except AttributeError:
-                print("No robot available", flush=True)
+    def keyboard_start_thread(self):
+        self.keyboard_listener = Listener(on_press=self.keyboard_on_press, on_release=self.keyboard_on_release)
+        self.keyboard_listener.start()
+        self.keyboard_listener.join()  # keep the program alive (optional in REPL, essential in scripts)
 
-        if key == KeyCode.from_char('o'):
-            try:
-                self.grip_value = self.grip_open_width
-                self.move_gripper(self.grip_value)
-                self.gripper_feedback_correction = 1
-            except AttributeError:
-                print("No robot available", flush=True)
-        if key == KeyCode.from_char('f'):
-            self.feedback[3] = 1
-        if key == KeyCode.from_char('k'):
-            print("camera feedback enabled")
-            self.img_feedback_flag = 1
-            self.img_feedback_correction = 1
-        if key == KeyCode.from_char('l'):
-            print("camera feedback disabled")
-            self.img_feedback_flag = 0
-            self.img_feedback_correction = 1
-        if key == KeyCode.from_char('z'):
-            print("spiral enabled")
-            self.spiral_flag = 1
-            self.spiral_feedback_correction=1
-        if key == KeyCode.from_char('x'):
-            print("spiral disabled")
-            self.spiral_feedback_correction=1
-            self.spiral_flag = 0
+    def keyboard_stop(self):
+        self.key_thr.join(timeout=1)
+        self.keyboard_listener.stop()
 
-        if key == KeyCode.from_char('m'):    
-            quat_goal = list_2_quaternion(self.curr_ori_wxyz)
-            goal = pos_quat_2_pose_st(self.curr_pos, quat_goal)
-
-            self.move_to_pose_with_stampedpose(goal)
-            
-            self.set_stiffness(0, 0, 0, 50, 50, 50, 0)
-            print("higher rotatioal stiffness")
-
-        if key == KeyCode.from_char('n'):    
-            self.set_stiffness(0, 0, 0, 0, 0, 0, 0)
-            print("zero rotatioal stiffness")
-        if key == Key.space:
-            self.pause=not(self.pause)
-            if self.pause==True:
-                print("Recording paused")    
-            else:
-                print("Recording started again")  
-        key=0
-
-    def square_exp(self, ind_curr, ind_j):
-        dist = np.sqrt((self.recorded_traj[0][ind_curr]-self.recorded_traj[0][ind_j])**2+(self.recorded_traj[1][ind_curr]-self.recorded_traj[1][ind_j])**2+(self.recorded_traj[2][ind_curr]-self.recorded_traj[2][ind_j])**2)
-        sq_exp = np.exp(-dist**2/self.length_scale**2)
-        return sq_exp    
-
-    def correct(self):
-        if np.sum(self.feedback[:3])!=0:
-            for j in range(self.recorded_traj.shape[1]):
-                x = self.feedback[0]*self.square_exp(self.time_index, j)
-                y = self.feedback[1]*self.square_exp(self.time_index, j)
-                z = self.feedback[2]*self.square_exp(self.time_index, j)
-
-                self.recorded_traj[0][j] += x
-                self.recorded_traj[1][j] += y
-                self.recorded_traj[2][j] += z
-        
-        if self.img_feedback_correction:
-            self.recorded_img_feedback_flag[0, self.time_index:] = self.img_feedback_flag
-
-        if self.spiral_feedback_correction:
-            self.recorded_spiral_flag[0, self.time_index:] = self.spiral_flag
-        
-        if self.gripper_feedback_correction:
-            self.recorded_gripper[0, self.time_index:] = self.grip_value
-
-        if self.feedback[3] != 0:
-            self.faster_counter = 10
-            
-        if self.faster_counter > 0 and self.time_index != self.recorded_traj.shape[1]-1:
-            self.faster_counter -= 1
-            self.recorded_traj = np.delete(self.recorded_traj, self.time_index+1, 1)
-            self.recorded_ori_wxyz = np.delete(self.recorded_ori_wxyz, self.time_index+1, 1)
-            self.recorded_gripper = np.delete(self.recorded_gripper, self.time_index+1, 1)
-            self.recorded_img = np.delete(self.recorded_img, self.time_index+1, 0)
-            self.recorded_img_feedback_flag = np.delete(self.recorded_img_feedback_flag, self.time_index+1, 1)
-            self.recorded_spiral_flag = np.delete(self.recorded_spiral_flag, self.time_index+1, 1)
-                       
-        self.feedback = np.zeros(4)
-        self.img_feedback_correction = 0
-        self.gripper_feedback_correction = 0
-        self.spiral_feedback_correction = 0 
-
-    
 
 class FrankaOnPress():
     def __init__(self):
         super(FrankaOnPress, self).__init__()
-        
-        self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
-        self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
-        self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
-        self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
-        self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
 
         self.x_positive_press_act = False
         self.x_negative_press_act = False
@@ -170,6 +47,16 @@ class FrankaOnPress():
         self.circle_release_act = False
         self.cross_release_act = False
         self.check_release_act = False
+
+        self.frankabuttons_start()
+
+    def frankabuttons_start(self):
+        self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
+        self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
+        self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
+        self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
+        self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
+
 
     def cb_x(self, msg):
         if int(msg.data) == 1:
@@ -248,16 +135,16 @@ class FrankaOnPress():
 
 
 
-class RiskAwareFrankaButtons(FrankaOnPress):
+class FrankaConnector(FrankaOnPress):
     def __init__(self):
-        super(RiskAwareFrankaButtons, self).__init__()
+        super(FrankaConnector, self).__init__()
     def franka_on_press(self, key):
         if key == "check":
-            self._on_press(KeyCode.from_char("t")) # safe
+            self.keyboard_on_press(KeyCode.from_char("t")) # safe
         elif key == "cross":
-            self._on_press(KeyCode.from_char("r")) # danger
+            self.keyboard_on_press(KeyCode.from_char("r")) # danger
         elif key == "circle":
-            self._on_press(KeyCode.from_char("q"))
+            self.keyboard_on_press(KeyCode.from_char("q"))
         elif key == "x_positive":
             print("x=1 button have no mapping")
         elif key == "x_negative":
@@ -269,11 +156,13 @@ class RiskAwareFrankaButtons(FrankaOnPress):
 
     def franka_on_release(self, key):
         if key == "check":
-            self._on_release(KeyCode.from_char("t")) # safe
+            print("transparent (safe) flag enabled")
+            self.safe_flag = 1
+            self.risk_flag = 0
         elif key == "cross":
-            self._on_release(KeyCode.from_char("r")) # danger
+            self.keyboard_on_release(KeyCode.from_char("r")) # danger
         elif key == "circle":
-            self._on_release(KeyCode.from_char("q"))
+            self.keyboard_on_release(KeyCode.from_char("q"))
         elif key == "x_positive":
             print("x=1 button have no mapping")
         elif key == "x_negative":
@@ -285,21 +174,167 @@ class RiskAwareFrankaButtons(FrankaOnPress):
 
 
 
-class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
+
+class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, TeleoperationByDrawing):
+    def __init__(self):
+        super(Feedback, self).__init__()
+        self.feedback = np.zeros(7) # demonstration/teleoperation feedback active gains
+        self.feedback_gripper = None
+
+        self.correction_feedback=np.zeros(4)
+        self.feedback_gain=0.002
+        self.faster_counter=0
+        self.length_scale = 0.005
+        self.correction_window = 300
+        self.img_feedback_flag = 0
+        self.spiral_flag = 0
+        self.img_feedback_correction = 0
+        self.gripper_feedback_correction = 0
+        self.spiral_feedback_correction=0
+        self.pause=False
+
+    @property
+    def take_control(self):
+        return not (sum(self.feedback) == 0) # if feedback is zeroes -> no control
+
+    def keyboard_on_release(self, key):
+        pass
+
+    def keyboard_on_press(self, key):
+        self.get_logger().debug(f"Event happened, user pressed {key}")
+        # This function runs on the background and checks if a keyboard key was pressed
+        if key == KeyCode.from_char('e'):
+            self.end = True
+        # Feedback for translate forward/backward
+        if key == KeyCode.from_char('w'):
+            self.correction_feedback[0] = self.feedback_gain
+        if key == KeyCode.from_char('s'):
+            self.correction_feedback[0] = -self.feedback_gain
+        # Feedback for translate left/right
+        if key == KeyCode.from_char('a'):
+            self.correction_feedback[1] = self.feedback_gain
+        if key == KeyCode.from_char('d'):
+            self.correction_feedback[1] = -self.feedback_gain
+        # Feedback for translate up/down
+        if key == KeyCode.from_char('u'):
+            self.correction_feedback[2] = self.feedback_gain
+        if key == KeyCode.from_char('j'):
+            self.correction_feedback[2] = -self.feedback_gain
+        # Close/open gripper
+        if key == KeyCode.from_char('c'):
+            try:
+                self.grip_value = 0
+                self.grasp_gripper(self.grip_value)
+                self.gripper_feedback_correction = 1
+            except AttributeError:
+                print("No robot available", flush=True)
+
+        if key == KeyCode.from_char('o'):
+            try:
+                self.grip_value = self.grip_open_width
+                self.move_gripper(self.grip_value)
+                self.gripper_feedback_correction = 1
+            except AttributeError:
+                print("No robot available", flush=True)
+        if key == KeyCode.from_char('f'):
+            self.correction_feedback[3] = 1
+        if key == KeyCode.from_char('k'):
+            print("camera feedback enabled")
+            self.img_feedback_flag = 1
+            self.img_feedback_correction = 1
+        if key == KeyCode.from_char('l'):
+            print("camera feedback disabled")
+            self.img_feedback_flag = 0
+            self.img_feedback_correction = 1
+        if key == KeyCode.from_char('z'):
+            print("spiral enabled")
+            self.spiral_flag = 1
+            self.spiral_feedback_correction=1
+        if key == KeyCode.from_char('x'):
+            print("spiral disabled")
+            self.spiral_feedback_correction=1
+            self.spiral_flag = 0
+
+        if key == KeyCode.from_char('m'):    
+            quat_goal = list_2_quaternion(self.curr_ori_wxyz)
+            goal = pos_quat_2_pose_st(self.curr_pos, quat_goal)
+
+            self.move_to_pose_with_stampedpose(goal)
+            
+            self.set_stiffness(0, 0, 0, 50, 50, 50, 0)
+            print("higher rotatioal stiffness")
+
+        if key == KeyCode.from_char('n'):    
+            self.set_stiffness(0, 0, 0, 0, 0, 0, 0)
+            print("zero rotatioal stiffness")
+        if key == Key.space:
+            self.pause=not(self.pause)
+            if self.pause==True:
+                print("Recording paused")    
+            else:
+                print("Recording started again")  
+        key=0
+
+    def square_exp(self, ind_curr, ind_j):
+        dist = np.sqrt((self.recorded_traj[0][ind_curr]-self.recorded_traj[0][ind_j])**2+(self.recorded_traj[1][ind_curr]-self.recorded_traj[1][ind_j])**2+(self.recorded_traj[2][ind_curr]-self.recorded_traj[2][ind_j])**2)
+        sq_exp = np.exp(-dist**2/self.length_scale**2)
+        return sq_exp    
+
+    def correct(self):
+        if np.sum(self.correction_feedback[:3])!=0:
+            for j in range(self.recorded_traj.shape[1]):
+                x = self.correction_feedback[0]*self.square_exp(self.time_index, j)
+                y = self.correction_feedback[1]*self.square_exp(self.time_index, j)
+                z = self.correction_feedback[2]*self.square_exp(self.time_index, j)
+
+                self.recorded_traj[0][j] += x
+                self.recorded_traj[1][j] += y
+                self.recorded_traj[2][j] += z
+        
+        if self.img_feedback_correction:
+            self.recorded_img_feedback_flag[0, self.time_index:] = self.img_feedback_flag
+
+        if self.spiral_feedback_correction:
+            self.recorded_spiral_flag[0, self.time_index:] = self.spiral_flag
+        
+        if self.gripper_feedback_correction:
+            self.recorded_gripper[0, self.time_index:] = self.grip_value
+
+        if self.correction_feedback[3] != 0:
+            self.faster_counter = 10
+            
+        if self.faster_counter > 0 and self.time_index != self.recorded_traj.shape[1]-1:
+            self.faster_counter -= 1
+            self.recorded_traj = np.delete(self.recorded_traj, self.time_index+1, 1)
+            self.recorded_ori_wxyz = np.delete(self.recorded_ori_wxyz, self.time_index+1, 1)
+            self.recorded_gripper = np.delete(self.recorded_gripper, self.time_index+1, 1)
+            self.recorded_img = np.delete(self.recorded_img, self.time_index+1, 0)
+            self.recorded_img_feedback_flag = np.delete(self.recorded_img_feedback_flag, self.time_index+1, 1)
+            self.recorded_spiral_flag = np.delete(self.recorded_spiral_flag, self.time_index+1, 1)
+                       
+        self.correction_feedback = np.zeros(4)
+        self.img_feedback_correction = 0
+        self.gripper_feedback_correction = 0
+        self.spiral_feedback_correction = 0 
+
+    
+
+
+class RiskAwareFeedback(Feedback):
     def __init__(self, button_press_mode: str = "momentary"):
         super(RiskAwareFeedback, self).__init__()
         self.risk_flag = 0
         self.safe_flag = 0
         self.novelty_flag = 0
         self.recovery_phase = -1.
-        self.switch_flag = None
+        self.switch_flag = False
 
         try:
             self.button_press_mode
         except AttributeError:
             self.button_press_mode = button_press_mode
 
-    def _on_press(self, key):
+    def keyboard_on_press(self, key):
         if not hasattr(self,'button_press_mode'): return # init not finished
 
         if self.button_press_mode == 'toggle':
@@ -308,7 +343,7 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
             self._on_press_momentary(key)
         else: raise Exception()
 
-    def _on_release(self, key):
+    def keyboard_on_release(self, key):
         if not hasattr(self,'button_press_mode'): return # init not finished
 
         if self.button_press_mode == 'toggle':
@@ -352,7 +387,7 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
                 self.target_time_index = int(fraction * trajectory_len)
                 self.recovery_phase = fraction
 
-        super()._on_press(key)
+        super().keyboard_on_press(key)
 
     def _on_press_momentary(self, key):
         if key == KeyCode.from_char("r"):
@@ -380,7 +415,7 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
                 self.target_time_index = int(fraction * trajectory_len)
                 self.recovery_phase = fraction
 
-        super()._on_press(key)
+        super().keyboard_on_press(key)
 
     def _on_release_momentary(self, key):
         if key == KeyCode.from_char("r"):
@@ -395,9 +430,45 @@ class RiskAwareFeedback(Feedback, RiskAwareFrankaButtons):
 
 
 if __name__ == '__main__':
+    from skills_manager.ros_utils import SpinningRosNode
+
+    @dataclass
+    class DummyGripperState:
+        is_grasped: bool
+
+    @dataclass
+    class DummyGripper:
+        state: DummyGripperState
+        def read_once(self):
+            return self.state
+
+    class DummyPanda:
+        def get_position(self):
+            return [0.4, 0.0, 0.4]
+        def get_orientation(self, scalar_first: bool):
+            return [1.0, 0.0, 0.0, 0.0]
+
+    class FeedbackRosNode(Feedback, SpinningRosNode):
+        def __init__(self):
+            super(FeedbackRosNode, self).__init__()
+            self.gripper = DummyGripper(DummyGripperState(is_grasped=False))
+            self.panda = DummyPanda()
+
     rclpy.init()
     # fb = FrankaButtons()
     
+    f = FeedbackRosNode()
+    f.keyboard_start()
+    # f.keyboard_stop()
+    # f.keyboard_start()
+    f.joy_start()
+    # f.joy_stop()
+    # f.joy_start()
+    f.teleop_start()
+
     # raf = RiskAwareFeedback(button_press_mode="toggle")
-    raf = RiskAwareFeedback(button_press_mode="momentary")
-    input("Press enter to quit")
+    # raf = RiskAwareFeedback(button_press_mode="momentary")
+    while True:
+        time.sleep(0.1)
+        print(f.feedback, flush=True)
+
