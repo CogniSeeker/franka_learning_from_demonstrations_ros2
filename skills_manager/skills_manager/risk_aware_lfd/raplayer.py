@@ -17,9 +17,6 @@ class RiskAwarePlayer(Player):
     def __init__(self):
         super(RiskAwarePlayer, self).__init__()
 
-    def set_decision_unit(self, obj):
-        self.state_decider = obj
-
     def get_current_branch(self):
         try:
             return int(self.filename.split("_")[-1])
@@ -33,6 +30,7 @@ class RiskAwarePlayer(Player):
         start = self.player_init()
         self.traj_rec_init()
         self.end = False
+        self.pause = False
         while self.time_index <( self.recorded_traj.shape[1]) and rclpy.ok() and not self.end:
             print("Execution time index: ", self.time_index, flush=True)
             try:
@@ -63,7 +61,7 @@ class RiskAwarePlayer(Player):
                 
                 self.traj_rec_step()
                 
-                anomaly, suggested_branch = self.state_decider(self.get_observations())
+                anomaly, suggested_branch = self.state_decider(self.get_observations()[0], self.time_index)
                 visualize_labelled_video_frame(self.curr_image, risk_flag=anomaly, risk_val=0.0)
                 
                 self.pause |= anomaly

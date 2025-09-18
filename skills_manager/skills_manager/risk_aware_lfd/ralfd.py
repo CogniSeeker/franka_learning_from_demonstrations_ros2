@@ -10,7 +10,7 @@ from video_embedding.utils import get_session, number_of_saved
 
 from skills_manager.camera_feedback import image_process
 from skills_manager.lfd import LfD
-from skills_manager.risk_aware_lfd.raplayer import RiskAwarePlayer, InteractivePlayer
+from skills_manager.risk_aware_lfd.raplayer import RiskAwarePlayer
 from skills_manager.risk_aware_lfd.risk_policy import *
 from skills_manager.feedback import Feedback, RiskAwareFeedback
 
@@ -25,7 +25,7 @@ from video_embedding.utils import get_trajectory_path
 
 class RALfD(RiskAwarePlayer, RiskAwareFeedback, LfD):
 
-    def __init__(self, estimator_risk_policy: str = 'ContinueRiskPolicy', risk_patience: int = 2, button_press_mode: str = "momentary"):
+    def __init__(self, state_decider, estimator_risk_policy: str = 'ContinueRiskPolicy', risk_patience: int = 2, button_press_mode: str = "momentary"):
         """
 
         Args:
@@ -37,6 +37,8 @@ class RALfD(RiskAwarePlayer, RiskAwareFeedback, LfD):
                 "momentary" - Pressing a button (e.g. "r") sets flag and releasing the same button to resets flag
         """        
         super(RALfD, self).__init__()
+
+        self.state_decider = state_decider
 
         self.risk_policy = eval(estimator_risk_policy)(risk_patience)
         
@@ -251,6 +253,3 @@ class RALfD(RiskAwarePlayer, RiskAwareFeedback, LfD):
         playsound(f'{risk_estimation.path}/sounds/dialog-warning.oga')
         playsound(f'{risk_estimation.path}/sounds/dialog-warning.oga')
 
-class InteractiveRALfD(InteractivePlayer, RALfD):
-    def __init__(self):
-        super(InteractiveRALfD, self).__init__()
