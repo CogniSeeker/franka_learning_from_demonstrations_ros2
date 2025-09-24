@@ -205,5 +205,8 @@ def update_clicked_image(clickData, skill_file):
         print(f"Error updating image: {e}")
         return None
 
-if __name__ == '__main__':
+def run():
     app.run(debug=True, host='0.0.0.0', port=8076)
+
+if __name__ == '__main__':
+    run()
