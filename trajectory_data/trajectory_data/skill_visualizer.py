@@ -205,6 +205,123 @@ def update_clicked_image(clickData, skill_file):
         print(f"Error updating image: {e}")
         return None
 
+def show_skill(skill_file, port=8090, debug=True):
+    """
+    Minimal viewer for a single skill (no gripper, no template).
+    Uses your existing load_skill_data(...) and numpy_to_base64(...).
+
+    Usage:
+        show_skill("my_skill.npz")                # file inside TRAJECTORIES_DIR
+        show_skill("/abs/path/to/my_skill.npz")   # absolute path
+    """
+    # --- Load data (supports filename OR absolute path) ---
+    if os.path.isabs(skill_file) or os.path.sep in skill_file:
+        data_npz = np.load(skill_file)
+        data = {
+            'traj': data_npz['traj.npy'],
+            'images': data_npz['img.npy'],
+        }
+        skill_label = os.path.basename(skill_file)
+    else:
+        data = load_skill_data(skill_file)  # your existing helper (expects filename in TRAJECTORIES_DIR)
+        skill_label = skill_file
+
+    traj = data['traj']
+    images = data['images']
+
+    # --- Build the same trajectory figure you already have ---
+    point_indices = np.arange(traj.shape[1])
+    trajectory_fig = go.Figure(
+        data=[go.Scatter3d(
+            x=traj[0,:],
+            y=traj[1,:],
+            z=traj[2,:],
+            mode='markers+lines',
+            marker=dict(
+                size=4,
+                color=point_indices,
+                colorscale='Viridis',
+                colorbar=dict(title='Point Index')
+            ),
+            line=dict(color='royalblue', width=2),
+            customdata=point_indices,
+            hovertemplate='<b>Point %{customdata}</b><br>' +
+                          'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+        )]
+    )
+    trajectory_fig.update_layout(
+        title=f'{skill_label} End-Effector Trajectory',
+        scene=dict(
+            aspectmode='data',
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        ),
+        margin=dict(l=0, r=0, b=0, t=40),
+    )
+
+    # --- Minimal Dash app layout: left = trajectory, right = image ---
+    mini = dash.Dash(__name__ + "_show_skill")
+    mini.layout = html.Div([
+        html.Div([
+            dcc.Graph(
+                id='traj-3d',
+                figure=trajectory_fig,
+                style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top'}
+            ),
+            html.Div([
+                html.Img(
+                    id='trajectory-image',
+                    style={
+                        'width': '100%',
+                        'maxHeight': '500px',
+                        'objectFit': 'contain',
+                        'border': '1px solid #ddd',
+                        'borderRadius': '8px'
+                    }
+                ),
+                html.Div(id='img-caption', style={'marginTop':'6px','fontFamily':'monospace','fontSize':'12px','color':'#666'})
+            ], style={'width': '49%', 'display': 'inline-block', 'paddingLeft': '12px', 'verticalAlign': 'top'})
+        ])
+    ], style={'padding': '6px', 'background-color': '#FFF'})
+
+    # --- Callback: click waypoint -> show corresponding image on the right ---
+    @mini.callback(
+        Output('trajectory-image', 'src'),
+        Output('img-caption', 'children'),
+        Input('traj-3d', 'clickData'),
+        prevent_initial_call=False  # starts empty until you click
+    )
+    def update_clicked_image(clickData):
+        if not clickData or not clickData.get('points'):
+            return None, "Click a waypoint to view its image."
+        try:
+            # Use the same customdata index we attached to the points
+            point_idx = clickData['points'][0].get('customdata', clickData['points'][0].get('pointNumber', 0))
+            point_idx = int(point_idx)
+
+            img_array = images[point_idx]
+            # Handle grayscale image (H,W) or (N,H,W) by taking first frame
+            if len(img_array.shape) == 3:
+                img_array = img_array[0]
+
+            return numpy_to_base64(img_array), f"Point index: {point_idx}"
+        except Exception as e:
+            print(f"Error updating image: {e}")
+            return None, "Failed to render image for this waypoint."
+
+    # --- Run the mini app ---
+    # mini.run(debug=debug, host='0.0.0.0', port=port)
+    mini.run(
+        debug=debug,
+        host="0.0.0.0", port=port,
+        jupyter_mode="inline",     # display inside the output cell
+        jupyter_height=500,        # control iframe height
+        jupyter_width="40%",      # optional
+        dev_tools_ui=False,         # <-- hide the bottom Dev Tools panel
+    )
+
+
 def run():
     app.run(debug=True, host='0.0.0.0', port=8076)
 

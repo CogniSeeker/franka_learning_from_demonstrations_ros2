@@ -34,7 +34,7 @@ def set_remote_parameters(self, param_name, param_value, param_type=None, server
     client = self.create_client(SetParameters, f'/{server}/set_parameters')
     
     while not client.wait_for_service(timeout_sec=1.0):
-        self.get_logger().info('Waiting for SetParameters service...')
+        self.get_logger().info(f'Waiting for SetParameters service... (check that server is running: {server})')
 
     request = SetParameters.Request()
 
@@ -98,6 +98,12 @@ def get_remote_parameter(node, param_name: List[str], server: str | None = None)
         server = str(node.get_name())
     
     return get_remote_parameters(node, [param_name], server)[0]
+
+def set_remote_parameter(node, param_name, param_value, server: str | None = None):
+    if server is None:
+        server = str(node.get_name())
+
+    return set_remote_parameters(node, [param_name], [param_value], param_type=None, server=server)
 
 
 def extract_param_value(pvalue) -> Tuple[Any, Parameter.Type]:

@@ -6,7 +6,8 @@ import threading
 from rclpy.callback_groups import ReentrantCallbackGroup
 import numpy as np
 
-from skills_manager.ros_param_manager import get_remote_parameter
+from skills_manager.ros_param_manager import get_remote_parameter, set_remote_parameter
+from rclpy.exceptions import ParameterAlreadyDeclaredException
 
 class SpinningRosNode(Node):
     def __init__(self):
@@ -19,9 +20,13 @@ class SpinningRosNode(Node):
         self.callback_group = ReentrantCallbackGroup()
 
         self.get_remote_parameter = get_remote_parameter
+        self.set_remote_parameter = set_remote_parameter
 
     def declare_parameter_and_get(self, name, default_value):
-        self.declare_parameter(name, default_value)
+        try:
+            self.declare_parameter(name, default_value)
+        except ParameterAlreadyDeclaredException:
+            self.set_remote_parameter(self, name, default_value)
         return self.get_remote_parameter(self, name)
 
 

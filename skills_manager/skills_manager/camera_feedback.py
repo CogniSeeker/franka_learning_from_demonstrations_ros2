@@ -10,6 +10,8 @@ CAMERA_INFO_TOPIC = "/camera/color/camera_info"
 CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
 
 def image_process(image, ds_factor, row_crop_top, row_crop_bottom, col_crop_left, col_crop_right):
+    if image is None:
+        raise Exception("Camera is not sending images!")
     h, w = image.shape[:2] # Run camera node: ros2 
 
     # Define the new dimensions

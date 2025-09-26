@@ -179,10 +179,10 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
     def __init__(self):
         super(Feedback, self).__init__()
         self.feedback = np.zeros(7) # demonstration/teleoperation feedback active gains
-        self.feedback_gripper = None
+        self.feedback_gripper = ""
 
         self.correction_feedback=np.zeros(4)
-        self.feedback_gain=0.002
+        self.feedback_gain=0.01
         self.faster_counter=0
         self.length_scale = 0.005
         self.correction_window = 300
@@ -193,6 +193,14 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         self.spiral_feedback_correction=0
         self.pause=False
 
+    def input_check(self):
+        try:
+            while True:
+                time.sleep(0.2)
+                print(f"{self.feedback[0]:+.3f} {self.feedback[1]:+.3f} {self.feedback[2]:+.3f} {self.feedback[3]:+.3f} {self.feedback[4]:+.3f} {self.feedback[5]:+.3f} {self.feedback[6]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
+        except KeyboardInterrupt:
+            return
+
     @property
     def take_control(self):
         return not (sum(self.feedback) == 0) # if feedback is zeroes -> no control
@@ -201,7 +209,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         pass
 
     def keyboard_on_press(self, key):
-        self.get_logger().debug(f"Event happened, user pressed {key}")
+        self.get_logger().info(f"Event happened, user pressed {key}")
         # This function runs on the background and checks if a keyboard key was pressed
         if key == KeyCode.from_char('e'):
             self.end = True

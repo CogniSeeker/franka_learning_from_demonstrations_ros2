@@ -15,13 +15,21 @@ from panda_control.pose_transform_functions import position_2_array, pos_quat_2_
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from skills_manager.ros_param_manager import get_remote_parameters
 import trajectory_data
+from copy import deepcopy
 
 OPEN_GRIPPER_WIDTH = 0.08 # How much gripper opens [m]
 
 from lfd_msgs.srv import SetTemplate
 from std_srvs.srv import Trigger
 
-class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode):
+from trajectory_data.skill_visualizer import show_skill
+class SkillVis():
+    def show_skill(self, name_skill: str):
+        show_skill(name_skill)
+
+from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
+
+class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode, SkillVis):
     def __init__(self):
         super(LfD, self).__init__()
         
@@ -48,20 +56,22 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         time.sleep(1)
 
     def traj_rec(self, trigger=0.005):
+        self.end = False
+        self.pause = False
         self.set_stiffness(0,0,0,0,0,0,0)
 
         init_pos = self.curr_pos
         vel = 0 
-        init_feedback = self.feedback
+        init_feedback = deepcopy(self.feedback)
         print("Move robot to start recording.", flush=True)
         while vel < trigger:
             self.r.sleep()
-            is_teaching_kinesthetic = sum(self.feedback - init_feedback) == 0  # feedback changed -> not kinesthetic teaching
+            set_stifness_once = sum(self.feedback - init_feedback) != 0  # feedback changed -> not kinesthetic teaching
+            if set_stifness_once:
+                print("Externally control, setting stiffness!", flush=True)
+                self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
+                break
             vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
-
-        if not is_teaching_kinesthetic:
-            print("Control externally.", flush=True)
-            self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
 
         self.recorded_traj = self.curr_pos
         self.recorded_ori_wxyz = self.curr_ori_wxyz
@@ -83,7 +93,8 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         print("Recording started. Press e to stop.")
         while not self.end:
             while(self.pause):
-                self.r.sleep()               
+                print("Paused", flush=True)
+                time.sleep(0.5)
             self.recorded_traj = np.c_[self.recorded_traj, self.curr_pos]
             self.recorded_ori_wxyz  = np.c_[self.recorded_ori_wxyz, self.curr_ori_wxyz]
             self.recorded_gripper = np.c_[self.recorded_gripper, self.grip_value]
@@ -94,6 +105,25 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_img = np.r_[self.recorded_img, resized_img_gray.reshape((1, resized_img_gray.shape[0], resized_img_gray.shape[1]))]
             self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
+
+            goal = PoseStamped()
+            goal.pose.position = Point(x=self.curr_pos[0]+self.feedback[0], y=self.curr_pos[1]+self.feedback[1], z=self.curr_pos[2]+self.feedback[2])
+            goal.pose.orientation = Quaternion(x=self.curr_ori_wxyz[1]+self.feedback[3], y=self.curr_ori_wxyz[2]+self.feedback[4], z=self.curr_ori_wxyz[3]+self.feedback[5], w=self.curr_ori_wxyz[0]+self.feedback[6])
+            self.move_to_pose_with_stampedpose(goal)
+            # print(f"{self.curr_pos}", flush=True)
+            if self.feedback_gripper == "grasp": #(self.recorded_gripper[0][self.time_index]-self.recorded_gripper[0][max(0,self.time_index-1)]) < -self.grip_open_width/2:
+                print("closing gripper")
+
+                # if not self.gripper.read_once().is_grasped:
+                self.grasp_gripper(0.0)
+                time.sleep(0.1)
+                self.feedback_gripper = ""
+
+            if self.feedback_gripper == "open": #(self.recorded_gripper[0][self.time_index]-self.recorded_gripper[0][max(0,self.time_index-1)]) > self.grip_open_width/2:
+                print("open gripper")
+                self.move_gripper(1.0)
+                time.sleep(0.1)
+                self.feedback_gripper = ""
 
             self.update_additional_flags()
             self.r.sleep()
