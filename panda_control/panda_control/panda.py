@@ -39,7 +39,7 @@ from copy import deepcopy
 
 class Panda():
     def __init__(self,
-                 K_pos: int = 1000, # Default Positional stiffness
+                 K_pos: int = 100, # Default Positional stiffness
                  K_ori: int = 80, # Default Orientation stiffness
                  K_ns: int = 0, # Default Nullspace stiffness
                  ):

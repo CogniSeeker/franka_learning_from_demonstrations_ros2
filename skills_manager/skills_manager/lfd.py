@@ -29,7 +29,7 @@ class SkillVis():
 
 from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
 
-class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode, SkillVis):
+class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode, SkillVis):
     def __init__(self):
         super(LfD, self).__init__()
         
@@ -285,7 +285,7 @@ class LfD(Panda, Feedback, Insertion, Transform, CameraFeedback, SpinningRosNode
         try:
             self.load(name_skill)
             print(f"Execution", flush=True)
-            self.execute()
+            return self.execute()
         except KeyboardInterrupt:
             return False
         return True

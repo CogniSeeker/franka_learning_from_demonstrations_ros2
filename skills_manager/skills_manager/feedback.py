@@ -28,6 +28,17 @@ class KeyboardConnector():
         self.keyboard_listener.stop()
 
 
+
+KEY_MAP = {
+    'check': 'check',
+    'cross': 'cross',
+    'circle': 'circle',
+    'left': 'x_negative',
+    'right': 'x_positive',
+    'down': 'y_negative',
+    'up': 'y_positive',
+}
+
 class FrankaOnPress():
     def __init__(self):
         super(FrankaOnPress, self).__init__()
@@ -48,15 +59,23 @@ class FrankaOnPress():
         self.cross_release_act = False
         self.check_release_act = False
 
-        self.frankabuttons_start()
+        self.desk.listen(self.franka_button_callback)
 
-    def frankabuttons_start(self):
-        self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
-        self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
-        self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
-        self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
-        self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
+    #     self.frankabuttons_start()
 
+    # def frankabuttons_start(self):
+    #     self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
+    #     self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
+    #     self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
+    #     self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
+    #     self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
+    '''
+    {'check': False, 'circle': False, 'cross': False, 'down': False, 'left': False, 'right': False, 'up': False}
+    '''
+
+    def franka_button_callback(self, event_dict):
+        for key in event_dict:
+            self.decide_act(KEY_MAP[key], event_dict[key])
 
     def cb_x(self, msg):
         if int(msg.data) == 1:
@@ -140,15 +159,20 @@ class FrankaConnector(FrankaOnPress):
         super(FrankaConnector, self).__init__()
     def franka_on_press(self, key):
         if key == "check":
-            self.keyboard_on_press(KeyCode.from_char("t")) # safe
+            self.keyboard_on_press(KeyCode.from_char("o"))
+            # self.keyboard_on_press(KeyCode.from_char("t")) # safe
         elif key == "cross":
-            self.keyboard_on_press(KeyCode.from_char("r")) # danger
+            self.keyboard_on_press(KeyCode.from_char("c"))
+            # self.keyboard_on_press(KeyCode.from_char("r")) # danger
         elif key == "circle":
-            self.keyboard_on_press(KeyCode.from_char("q"))
+            # self.keyboard_on_press(KeyCode.from_char("q"))
+            self.keyboard_on_press(KeyCode.from_char("e"))
         elif key == "x_positive":
-            print("x=1 button have no mapping")
+            # print("x=1 button have no mapping")
+            self.keyboard_on_press(KeyCode.from_char("c"))
         elif key == "x_negative":
-            print("x=-1 button have no mapping")
+            # print("x=-1 button have no mapping")
+            self.keyboard_on_press(KeyCode.from_char("o"))
         elif key == "y_positive":
             print("y=1 button have no mapping")
         elif key == "y_negative":
@@ -182,7 +206,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         self.feedback_gripper = ""
 
         self.correction_feedback=np.zeros(4)
-        self.feedback_gain=0.01
+        self.feedback_gain=0.002
         self.faster_counter=0
         self.length_scale = 0.005
         self.correction_window = 300

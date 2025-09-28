@@ -32,43 +32,42 @@ class RiskAwarePlayer(Player):
         self.end = False
         self.pause = False
         while self.time_index <( self.recorded_traj.shape[1]) and rclpy.ok() and not self.end:
-            print("Execution time index: ", self.time_index, flush=True)
+            # print("Execution time index: ", self.time_index, flush=True)
             try:
                 while(self.pause):
                     self.r.sleep()
                     
                     if self.take_control: # user take control
-                        print("recording new branch")
-                        self.traj_rec()
-                        self.save(f"{self.filename}_branch_at_{self.time_index}")
-                        return    
-                    
-                    if self.continue_feedback:
-                        self.save_these_img_data()
-                        break
-
-                    if self.switch_flag:
+                        print("branch request")
+                        return ("branch request at", self.time_index, f"{self.filename}_branch_at_{self.time_index}")
                         
-                        branch: str = self.generate_closest_branch_name()
+                    # if self.continue_feedback:
+                    #     self.save_these_img_data()
+                    #     break
 
-                        self.load(branch)
-                        self.time_index = 0
-                        self.execute(retry_insertion_flag)
-                        return
+                    # if self.switch_flag:
+                        
+                    #     branch: str = self.generate_closest_branch_name()
+
+                    #     self.load(branch)
+                    #     self.time_index = 0
+                    #     self.execute(retry_insertion_flag)
+                    #     return
                 
                 if self.player_step(start, retry_insertion_flag) == 'stop':
                     break
                 
                 self.traj_rec_step()
                 
-                anomaly, suggested_branch = self.state_decider(self.get_observations()[0], self.time_index)
+                anomaly, suggested_branch = self.state_decider.predict(self.get_observations()[0], self.time_index)
                 visualize_labelled_video_frame(self.curr_image, risk_flag=anomaly, risk_val=0.0)
                 
                 self.pause |= anomaly
 
                 curr_branch: int = self.get_current_branch()
                 # system switches branch
-                if suggested_branch != curr_branch:
+                print(f"[step {self.time_index}] now: {curr_branch} -> suggested: {suggested_branch}. anomaly: {anomaly}")
+                if False: #int(suggested_branch) != int(curr_branch):
                     self.load(self.get_branch(suggested_branch))
                     self.time_index = 0
                     self.execute(retry_insertion_flag)
