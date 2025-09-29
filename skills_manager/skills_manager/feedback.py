@@ -227,13 +227,13 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
 
     @property
     def take_control(self):
-        return not (sum(self.feedback) == 0) # if feedback is zeroes -> no control
+        return not (sum(self.feedback) == 0) or self.end # if feedback is zeroes -> no control # self.end is for kinesthetic teaching button detection
 
     def keyboard_on_release(self, key):
         pass
 
     def keyboard_on_press(self, key):
-        self.get_logger().info(f"Event happened, user pressed {key}")
+        # self.get_logger().info(f"Event happened, user pressed {key}")
         # This function runs on the background and checks if a keyboard key was pressed
         if key == KeyCode.from_char('e'):
             self.end = True
@@ -255,16 +255,15 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         # Close/open gripper
         if key == KeyCode.from_char('c'):
             try:
-                self.grip_value = 0
-                self.grasp_gripper(self.grip_value)
+                if not self.gripper.read_once().is_grasped:
+                    self.grasp_gripper(0)
                 self.gripper_feedback_correction = 1
             except AttributeError:
                 print("No robot available", flush=True)
 
         if key == KeyCode.from_char('o'):
             try:
-                self.grip_value = self.grip_open_width
-                self.move_gripper(self.grip_value)
+                self.move_gripper(0.08)
                 self.gripper_feedback_correction = 1
             except AttributeError:
                 print("No robot available", flush=True)

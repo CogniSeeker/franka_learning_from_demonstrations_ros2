@@ -54,8 +54,6 @@ class Panda():
         self.attractor_distance_threshold=0.05
         self.safety_check=True
          
-        self.gripper_width = 0
-
         self.translational_stiffness_X = self.K_pos
         self.translational_stiffness_Y = self.K_pos
         self.translational_stiffness_Z = self.K_pos
@@ -76,7 +74,8 @@ class Panda():
         self.desk.activate_fci()
 
         self.panda = panda_py.Panda(HOSTNAME)
-        
+        self.panda.disable_logging()
+
         self.gripper = Gripper(HOSTNAME)
         self.goal_position = None # Set (x,y,z) attractor
         self.goal_orientation = None # Set (1.0,0.0,0.0,0.0) attractor ori xyzw https://jeanelsner.github.io/panda-py/panda_py.html#panda_py.Panda.move_to_pose
@@ -146,10 +145,6 @@ class Panda():
         self.gripper.stop()
         # self.stop_pub.publish(self.stop_command)  
 
-    def joint_states_callback(self, data):
-        self.curr_joint = data.position[:7]
-        self.gripper_width = data.position[7] + data.position[8]
-    
     def set_configuration(self,joint):
         joint_des=Float32MultiArray()
         joint_des.data= np.array(joint).astype(np.float32).tolist()
@@ -161,6 +156,14 @@ class Panda():
             "translational_stiffness_X", "translational_stiffness_Y", "translational_stiffness_Z",
             "rotational_stiffness_X", "rotational_stiffness_Y", "rotational_stiffness_Z", "nullspace_stiffness"
             ], [k_t1, k_t2, k_t3, k_r1, k_r2, k_r3, k_ns], server=self.get_name())
+        
+        i = 0
+        while (self.translational_stiffness_X, self.translational_stiffness_Y, self.translational_stiffness_Z, self.rotational_stiffness_X, self.rotational_stiffness_Y, self.rotational_stiffness_Z, self.nullspace_stiffness) != (k_t1, k_t2, k_t3, k_r1, k_r2, k_r3, k_ns):
+            time.sleep(0.2)
+            i += 1
+            if i > 5:
+                print("still setting stiffness")
+
 
     # control robot to desired goal position
     def go_to_pose(self, goal_pose: PoseStamped, interp_dist=0.01, interp_dist_polar=0.01): 
@@ -251,7 +254,6 @@ class Panda():
         # set_parameter(self,self.get_name(),"max_delta_ori",0.5)
         r = self.create_rate(200)
         self.move_to_pose_with_stampedpose(self.curr_pose)
-        
         self.set_configuration(self.curr_joint)
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, self.K_ns) # Note: Legacy had zeros stiffness for rotations
 
@@ -417,6 +419,10 @@ class Panda():
 
     def move(self, *args, **kwargs):
         self.gripper.move(*args, **kwargs)
+
+    @property
+    def grip_value(self):
+        return round(self.gripper.read_once().width, 2)
 
     @property
     def force(self): # Get current force 

@@ -7,6 +7,11 @@ from PIL import Image
 import base64
 import io
 
+import socket, uuid, os, io, base64
+from IPython.display import display
+from IPython.display import Image as IPyImage
+
+
 # Configuration
 import trajectory_data, object_localization
 TRAJECTORIES_DIR = f"/home/imitlearn/petr_sandbox/saw_ws/src/trajectory_data/trajectories/quantitative_study"
@@ -205,7 +210,45 @@ def update_clicked_image(clickData, skill_file):
         print(f"Error updating image: {e}")
         return None
 
-def show_skill(skill_file, port=8090, debug=True):
+def _find_free_port(preferred=0):
+    """Return an available TCP port (0 => ask OS to choose)."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", preferred))
+        return s.getsockname()[1]
+
+def _fig_from_traj(traj):
+    """Build the SAME 3D trajectory figure you already use."""
+    point_indices = np.arange(traj.shape[1])
+    fig = go.Figure(
+        data=[go.Scatter3d(
+            x=traj[0,:], y=traj[1,:], z=traj[2,:],
+            mode='markers+lines',
+            marker=dict(size=4, color=point_indices, colorscale='Viridis',
+                        colorbar=dict(title='Point Index')),
+            line=dict(color='royalblue', width=2),
+            customdata=point_indices,
+            hovertemplate=('<b>Point %{customdata}</b><br>'
+                           'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>')
+        )]
+    )
+    fig.update_layout(
+        title='End-Effector Trajectory',
+        scene=dict(aspectmode='data', xaxis_title='X',
+                   yaxis_title='Y', zaxis_title='Z'),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+    return fig
+
+def save_trajectory_png(skill_file, out_png="trajectory.png"):
+    if os.path.isabs(skill_file) or os.path.sep in skill_file:
+        npz = np.load(skill_file); traj = npz['traj.npy']
+    else:
+        traj = load_skill_data(skill_file)['traj']
+    fig = _fig_from_traj(traj)
+    fig.write_image(out_png, scale=2)  # needs kaleido
+    return out_png
+
+def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
     """
     Minimal viewer for a single skill (no gripper, no template).
     Uses your existing load_skill_data(...) and numpy_to_base64(...).
@@ -228,6 +271,13 @@ def show_skill(skill_file, port=8090, debug=True):
 
     traj = data['traj']
     images = data['images']
+    grip = data['grip'].squeeze()
+
+    # Unique identity for this app instance
+    app_id = str(uuid.uuid4())[:8]
+    base_path = f"/{app_id}/"
+    if port is None:
+        port = _find_free_port(0)
 
     # --- Build the same trajectory figure you already have ---
     point_indices = np.arange(traj.shape[1])
@@ -260,9 +310,114 @@ def show_skill(skill_file, port=8090, debug=True):
         margin=dict(l=0, r=0, b=0, t=40),
     )
 
+    grip = np.asarray(grip, dtype=float)
+    x = np.asarray(point_indices)
+
+    # Define state and labels
+    OPEN_THRESHOLD = 0.04  # anything >= this counts as open
+    is_open = grip >= OPEN_THRESHOLD
+    state_txt = np.where(is_open, "Open", "Closed")
+
+    transition_idx = np.where(np.diff(is_open.astype(int)) != 0)[0] + 1
+
+    # Compute "time since last change" (in points) for hover
+    last_change = np.zeros_like(x, dtype=int)
+    if len(x) > 0:
+        lc = 0
+        for i in range(len(x)):
+            if i in transition_idx:
+                lc = 0
+            last_change[i] = lc
+            lc += 1
+
+    band_colors = np.where(is_open, "rgba(0,150,0,0.15)", "rgba(120,120,120,0.15)")
+    band_trace = go.Bar(
+        x=x,
+        y=np.full_like(grip, 0.09, dtype=float),   # a constant tall bar spanning the y-range
+        base=0.0,
+        marker=dict(color=band_colors, line=dict(width=0)),
+        hoverinfo="skip",
+        opacity=1.0,
+        showlegend=False
+    )
+
+    # Step line for the actual measurements
+    main_trace = go.Scatter(
+        x=x,
+        y=grip,
+        mode="lines",
+        line=dict(width=2),
+        line_shape="hv",  # step-like: hold value, then vertical jump
+        name="Gripper",
+        customdata=np.stack([state_txt, last_change], axis=1),
+        hovertemplate=(
+            "Point: %{x}<br>"
+            "Value: %{y:.2f} m<br>"
+            "State: %{customdata[0]}<br>"
+            "Since last change: %{customdata[1]} step(s)"
+            "<extra></extra>"
+        )
+    )
+
+    # Markers only at transitions
+    transition_trace = go.Scatter(
+        x=x[transition_idx] if transition_idx.size else [],
+        y=grip[transition_idx] if transition_idx.size else [],
+        mode="markers",
+        marker=dict(size=8, symbol="circle"),
+        name="State change",
+        hovertemplate="Point: %{x}<br>Value: %{y:.2f} m<br><b>State changed here</b><extra></extra>"
+    )
+
+    # (Optional) tiny rug to emphasize state on the baseline
+    rug_trace = go.Scatter(
+        x=x,
+        y=np.full_like(grip, -0.002, dtype=float),  # just below zero line
+        mode="markers",
+        marker=dict(size=4, symbol="line-ns"),
+        name="State rug",
+        hoverinfo="skip",
+        showlegend=False,
+        opacity=0.6
+    )
+
+    # --- Figure ---
+    gripper_fig = go.Figure(data=[band_trace, main_trace, transition_trace, rug_trace])
+
+    gripper_fig.update_layout(
+        title="",
+        margin=dict(l=0, r=0, b=0, t=40),
+        hovermode="x unified",
+        xaxis=dict(
+            title="Point Index",
+            rangeslider=dict(visible=True),  # quick zooming
+            showspikes=True,
+            spikemode="across",
+            spikesnap="cursor",
+            showgrid=False
+        ),
+        yaxis=dict(
+            title="Gripper [m]",
+            range=[-0.01, 0.09],
+            tickmode="array",
+            tickvals=[0.0, 0.08],
+            ticktext=["Closed", "Open"],
+            zeroline=True,
+            zerolinewidth=1,
+            showgrid=True,
+            gridwidth=1
+        ),
+        legend=dict(orientation="h", x=0, y=1.1)
+    )
+
+    # Subtle horizontal reference lines (0 and 0.08)
+    gripper_fig.add_hline(y=0.0, line_width=1, line_dash="dot")
+    gripper_fig.add_hline(y=0.08, line_width=1, line_dash="dot")
+
+
     # --- Minimal Dash app layout: left = trajectory, right = image ---
-    mini = dash.Dash(__name__ + "_show_skill")
-    mini.layout = html.Div([
+    app = dash.Dash(__name__ + "_show_skill")
+    app.layout = html.Div([
         html.Div([
             dcc.Graph(
                 id='traj-3d',
@@ -280,13 +435,18 @@ def show_skill(skill_file, port=8090, debug=True):
                         'borderRadius': '8px'
                     }
                 ),
-                html.Div(id='img-caption', style={'marginTop':'6px','fontFamily':'monospace','fontSize':'12px','color':'#666'})
+                html.Div(id='img-caption', style={'marginTop':'6px','fontFamily':'monospace','fontSize':'12px','color':'#666'}),
+                dcc.Graph(
+                    id="gripper-plot",
+                    figure=gripper_fig,
+                    style={"height": "240px", "width": "100%", "display": "inline-block"}
+                )
             ], style={'width': '49%', 'display': 'inline-block', 'paddingLeft': '12px', 'verticalAlign': 'top'})
         ])
     ], style={'padding': '6px', 'background-color': '#FFF'})
 
     # --- Callback: click waypoint -> show corresponding image on the right ---
-    @mini.callback(
+    @app.callback(
         Output('trajectory-image', 'src'),
         Output('img-caption', 'children'),
         Input('traj-3d', 'clickData'),
@@ -310,20 +470,40 @@ def show_skill(skill_file, port=8090, debug=True):
             print(f"Error updating image: {e}")
             return None, "Failed to render image for this waypoint."
 
-    # --- Run the mini app ---
-    # mini.run(debug=debug, host='0.0.0.0', port=port)
-    mini.run(
+    # app.run(debug=debug, host='0.0.0.0', port=port)
+    run_kwargs = dict(
         debug=debug,
-        host="0.0.0.0", port=port,
-        jupyter_mode="inline",     # display inside the output cell
-        jupyter_height=500,        # control iframe height
-        jupyter_width="40%",      # optional
+        host="127.0.0.1", port=port,
+        jupyter_width="800px",      # optional
         dev_tools_ui=False,         # <-- hide the bottom Dev Tools panel
+        dev_tools_hot_reload=False  # avoid hijacking previous iframes
     )
 
+    # try:
+    # Dash >= 2.11 supports jupyter_* args
+    if inline:
+        app.run(jupyter_mode="inline", jupyter_height=height, **run_kwargs)
+    else:
+        app.run(jupyter_mode="tab", **run_kwargs)
+    
+    # except TypeError:
+    #     # Fallback to JupyterDash if older stack:
+    #     from jupyter_dash import JupyterDash
+    #     app2 = JupyterDash(name=f"show_skill_{app_id}",
+    #                        routes_pathname_prefix=base_path,
+    #                        requests_pathname_prefix=base_path)
+    #     app2.layout = app.layout
+    #     app2.callback_map = app.callback_map
+    #     app2.run_server(mode="inline" if inline else "tab",
+    #                     height=height if inline else None,
+    #                     **run_kwargs)
+
+    # Return the URL in case you want to open it manually too
+    return f"http://127.0.0.1:{port}{base_path}"
 
 def run():
     app.run(debug=True, host='0.0.0.0', port=8076)
+    
 
 if __name__ == '__main__':
     run()

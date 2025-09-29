@@ -26,7 +26,7 @@ class Player():
         
         self.time_index=0
 
-        if self.recorded_gripper[0][0] < self.grip_open_width/2 and self.gripper_width > 0.9 * self.grip_open_width:
+        if self.recorded_gripper[0][0] < self.grip_open_width/2:
             print("closing gripper")
             self.grasp_gripper(self.recorded_gripper[0][self.time_index])
             time.sleep(0.1)

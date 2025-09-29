@@ -10,6 +10,8 @@ from tf2_ros.buffer import Buffer
 from geometry_msgs.msg import Point, Quaternion
 
 from skills_manager.ros_param_manager import get_remote_parameters
+import math
+import spatialmath as sm
 
 class Transform():
     def __init__(self):
@@ -56,3 +58,42 @@ class Transform():
                 self.get_logger().warning(e)
         transform = np.dot(tf_transformations.translation_matrix(rp_tr), tf_transformations.quaternion_matrix(rp_rt))
         return transform
+
+    @staticmethod
+    def step_toward_roll(q_pre, roll_target=math.pi, alpha=0.12):
+        """
+        Move a fraction (alpha in 0..1) from q_pre toward pose with the same yaw/pitch
+        but roll = roll_target (body-frame ZYX convention). Returns a new quaternion.
+        """
+        # 1) Extract yaw/pitch from q_pre (ZYX)
+        R = q_pre.R
+        yaw   = math.atan2(R[1,0], R[0,0])
+        pitch = math.atan2(-R[2,0], math.hypot(R[2,1], R[2,2]))
+
+        # 2) Build target with desired roll
+        q_target = sm.UnitQuaternion.Rz(yaw) * sm.UnitQuaternion.Ry(pitch) * sm.UnitQuaternion.Rx(roll_target)
+
+        # 3) Relative rotation (current -> target), shortest-arc step of size alpha
+        q_err = q_pre.inv() * q_target
+        ex, ey, ez, ew = q_err.vec_xyzs  # (x,y,z,w)
+        if ew < 0.0:  # enforce shortest arc
+            ew, ex, ey, ez = -ew, -ex, -ey, -ez
+
+        ew = max(-1.0, min(1.0, ew))
+        angle = 2.0 * math.acos(ew)
+        if angle < 1e-9:
+            return q_pre
+
+        s = math.sqrt(ex*ex + ey*ey + ez*ez)
+        if s < 1e-12:
+            axis = (1.0, 0.0, 0.0)
+        else:
+            axis = (ex/s, ey/s, ez/s)
+
+        step = alpha * angle
+        sh = math.sin(0.5 * step)
+        q_step = sm.UnitQuaternion([math.cos(0.5 * step),
+                                    axis[0]*sh, axis[1]*sh, axis[2]*sh])
+
+        # 4) Apply small body-frame correction
+        return q_pre * q_step

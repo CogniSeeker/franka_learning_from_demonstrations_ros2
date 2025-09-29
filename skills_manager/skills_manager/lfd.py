@@ -16,6 +16,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from skills_manager.ros_param_manager import get_remote_parameters
 import trajectory_data
 from copy import deepcopy
+import spatialmath as sm
 
 OPEN_GRIPPER_WIDTH = 0.08 # How much gripper opens [m]
 
@@ -25,6 +26,8 @@ from std_srvs.srv import Trigger
 from trajectory_data.skill_visualizer import show_skill
 class SkillVis():
     def show_skill(self, name_skill: str):
+        if name_skill[-4:] != ".npz":
+            name_skill = name_skill + ".npz"
         show_skill(name_skill)
 
 from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
@@ -75,10 +78,6 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         self.recorded_traj = self.curr_pos
         self.recorded_ori_wxyz = self.curr_ori_wxyz
-        if self.gripper_width < self.grip_open_width * 0.9:
-            self.grip_value = 0
-        else:
-            self.grip_value = self.grip_open_width
         self.recorded_gripper= self.grip_value
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
@@ -108,20 +107,32 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
             goal = PoseStamped()
             goal.pose.position = Point(x=self.curr_pos[0]+self.feedback[0], y=self.curr_pos[1]+self.feedback[1], z=self.curr_pos[2]+self.feedback[2])
-            goal.pose.orientation = Quaternion(x=self.curr_ori_wxyz[1]+self.feedback[3], y=self.curr_ori_wxyz[2]+self.feedback[4], z=self.curr_ori_wxyz[3]+self.feedback[5], w=self.curr_ori_wxyz[0]+self.feedback[6])
+            
+            # Joystick increments (radians): Z (yaw), Y (pitch)
+            dqz = sm.UnitQuaternion.Rz(self.feedback[3])
+            dqy = sm.UnitQuaternion.Ry(self.feedback[4])
+
+            cx, cy, cz, cw = self.curr_ori_xyzw
+            q_curr = sm.UnitQuaternion([cw, cx, cy, cz])  # [w,x,y,z]
+            q_pre = q_curr * dqz * dqy
+            q_goal = Transform.step_toward_roll(q_pre)    # gradually cancel roll
+
+
+            qx, qy, qz, qw = q_goal.vec_xyzs  # returns (x,y,z,w)
+            goal.pose.orientation = Quaternion(x=qx, y=qy, z=qz, w=qw)
+
             self.move_to_pose_with_stampedpose(goal)
-            # print(f"{self.curr_pos}", flush=True)
             if self.feedback_gripper == "grasp": #(self.recorded_gripper[0][self.time_index]-self.recorded_gripper[0][max(0,self.time_index-1)]) < -self.grip_open_width/2:
                 print("closing gripper")
 
-                # if not self.gripper.read_once().is_grasped:
-                self.grasp_gripper(0.0)
+                if not self.gripper.read_once().is_grasped:
+                    self.grasp_gripper(0)
                 time.sleep(0.1)
                 self.feedback_gripper = ""
 
             if self.feedback_gripper == "open": #(self.recorded_gripper[0][self.time_index]-self.recorded_gripper[0][max(0,self.time_index-1)]) > self.grip_open_width/2:
                 print("open gripper")
-                self.move_gripper(1.0)
+                self.move_gripper(0.08)
                 time.sleep(0.1)
                 self.feedback_gripper = ""
 
@@ -159,9 +170,11 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         self.time_index=0
 
-        if self.recorded_gripper[0][0] < self.grip_open_width/2 and self.gripper_width > 0.9 * self.grip_open_width:
+
+        if self.recorded_gripper[0][0] < -self.grip_open_width/2:
             print("closing gripper")
-            self.grasp_gripper(self.recorded_gripper[0][self.time_index])
+            if not self.gripper.read_once().is_grasped:
+                self.grasp_gripper(self.recorded_gripper[0][self.time_index])
             time.sleep(0.1)
         if self.recorded_gripper[0][0] > self.grip_open_width/2:
             print("opening gripper")
@@ -304,9 +317,16 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         goal.header.stamp = self.get_clock().now().to_msg()
 
         print(f"Move to start: x={goal.pose.position.x} y={goal.pose.position.y} y={goal.pose.position.z}", flush=True)
+        
+        # Lazy solution:
+        # go to goal with low stiffness
+        self.K_ori = 10
+        self.K_pos = 200
         self.go_to_pose_ik(goal)
-        time.sleep(4.0) # could be deleted because go_to_pose_ik waits until finished
-    
+        # then refine with high stiffness
+        self.K_ori = 80
+        self.K_pos = 1000
+        self.go_to_pose_ik(goal)    
 
     def start_publishing_scene(self):
         self.start_publishing_scene_call.call(Trigger.Request())

@@ -154,10 +154,6 @@ class RALfD(RiskAwarePlayer, RiskAwareFeedback, LfD):
         
         self.exec_record['traj'] = self.curr_pos
         self.exec_record['ori'] = self.curr_ori_xyzw
-        if self.gripper_width < self.grip_open_width * 0.9:
-            self.grip_value = 0
-        else:
-            self.grip_value = self.grip_open_width
         self.exec_record['gripper']= self.grip_value
         self.exec_record['img_feedback_flag'] = np.array([0])
         self.exec_record['spiral_flag'] = np.array([0])
