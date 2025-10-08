@@ -13,6 +13,8 @@ from nocode_robot_programming.gestures import TeleoperationByDrawing
 
 import threading
 
+BUTTON_PRESS_MODE = "momentary"
+
 class KeyboardConnector():
     def keyboard_start(self):
         self.key_thr = threading.Thread(target=self.keyboard_start_thread, daemon=True)
@@ -26,8 +28,6 @@ class KeyboardConnector():
     def keyboard_stop(self):
         self.key_thr.join(timeout=1)
         self.keyboard_listener.stop()
-
-
 
 KEY_MAP = {
     'check': 'check',
@@ -204,6 +204,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         super(Feedback, self).__init__()
         self.feedback = np.zeros(7) # demonstration/teleoperation feedback active gains
         self.feedback_gripper = ""
+        self.modality_in_control = ""
 
         self.correction_feedback=np.zeros(4)
         self.feedback_gain=0.002
@@ -213,7 +214,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         self.img_feedback_flag = 0
         self.spiral_flag = 0
         self.img_feedback_correction = 0
-        self.gripper_feedback_correction = 0
+        # self.gripper_feedback_correction = 0
         self.spiral_feedback_correction=0
         self.pause=False
 
@@ -255,16 +256,16 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         # Close/open gripper
         if key == KeyCode.from_char('c'):
             try:
-                if not self.gripper.read_once().is_grasped:
+                if not self.gripper_state.is_grasped:
                     self.grasp_gripper(0)
-                self.gripper_feedback_correction = 1
+                # self.gripper_feedback_correction = 1
             except AttributeError:
                 print("No robot available", flush=True)
 
         if key == KeyCode.from_char('o'):
             try:
                 self.move_gripper(0.08)
-                self.gripper_feedback_correction = 1
+                # self.gripper_feedback_correction = 1
             except AttributeError:
                 print("No robot available", flush=True)
         if key == KeyCode.from_char('f'):
@@ -307,52 +308,52 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         key=0
 
     def square_exp(self, ind_curr, ind_j):
-        dist = np.sqrt((self.recorded_traj[0][ind_curr]-self.recorded_traj[0][ind_j])**2+(self.recorded_traj[1][ind_curr]-self.recorded_traj[1][ind_j])**2+(self.recorded_traj[2][ind_curr]-self.recorded_traj[2][ind_j])**2)
+        dist = np.sqrt((self.loaded_traj[0][ind_curr]-self.loaded_traj[0][ind_j])**2+(self.loaded_traj[1][ind_curr]-self.loaded_traj[1][ind_j])**2+(self.loaded_traj[2][ind_curr]-self.loaded_traj[2][ind_j])**2)
         sq_exp = np.exp(-dist**2/self.length_scale**2)
         return sq_exp    
 
     def correct(self):
         if np.sum(self.correction_feedback[:3])!=0:
-            for j in range(self.recorded_traj.shape[1]):
+            for j in range(self.loaded_traj.shape[1]):
                 x = self.correction_feedback[0]*self.square_exp(self.time_index, j)
                 y = self.correction_feedback[1]*self.square_exp(self.time_index, j)
                 z = self.correction_feedback[2]*self.square_exp(self.time_index, j)
 
-                self.recorded_traj[0][j] += x
-                self.recorded_traj[1][j] += y
-                self.recorded_traj[2][j] += z
+                self.loaded_traj[0][j] += x
+                self.loaded_traj[1][j] += y
+                self.loaded_traj[2][j] += z
         
         if self.img_feedback_correction:
-            self.recorded_img_feedback_flag[0, self.time_index:] = self.img_feedback_flag
+            self.loaded_img_feedback_flag[0, self.time_index:] = self.img_feedback_flag
 
         if self.spiral_feedback_correction:
-            self.recorded_spiral_flag[0, self.time_index:] = self.spiral_flag
+            self.loaded_spiral_flag[0, self.time_index:] = self.spiral_flag
         
-        if self.gripper_feedback_correction:
-            self.recorded_gripper[0, self.time_index:] = self.grip_value
+        # if self.gripper_feedback_correction:
+        #     self.loaded_gripper[0, self.time_index:] = self.grip_value
 
         if self.correction_feedback[3] != 0:
             self.faster_counter = 10
             
-        if self.faster_counter > 0 and self.time_index != self.recorded_traj.shape[1]-1:
+        if self.faster_counter > 0 and self.time_index != self.loaded_traj.shape[1]-1:
             self.faster_counter -= 1
-            self.recorded_traj = np.delete(self.recorded_traj, self.time_index+1, 1)
-            self.recorded_ori_wxyz = np.delete(self.recorded_ori_wxyz, self.time_index+1, 1)
-            self.recorded_gripper = np.delete(self.recorded_gripper, self.time_index+1, 1)
-            self.recorded_img = np.delete(self.recorded_img, self.time_index+1, 0)
-            self.recorded_img_feedback_flag = np.delete(self.recorded_img_feedback_flag, self.time_index+1, 1)
-            self.recorded_spiral_flag = np.delete(self.recorded_spiral_flag, self.time_index+1, 1)
+            self.loaded_traj = np.delete(self.loaded_traj, self.time_index+1, 1)
+            self.loaded_ori_wxyz = np.delete(self.loaded_ori_wxyz, self.time_index+1, 1)
+            self.loaded_gripper = np.delete(self.loaded_gripper, self.time_index+1, 1)
+            self.loaded_img = np.delete(self.loaded_img, self.time_index+1, 0)
+            self.loaded_img_feedback_flag = np.delete(self.loaded_img_feedback_flag, self.time_index+1, 1)
+            self.loaded_spiral_flag = np.delete(self.loaded_spiral_flag, self.time_index+1, 1)
                        
         self.correction_feedback = np.zeros(4)
         self.img_feedback_correction = 0
-        self.gripper_feedback_correction = 0
+        # self.gripper_feedback_correction = 0
         self.spiral_feedback_correction = 0 
 
     
 
 
 class RiskAwareFeedback(Feedback):
-    def __init__(self, button_press_mode: str = "momentary"):
+    def __init__(self, button_press_mode: str = BUTTON_PRESS_MODE):
         super(RiskAwareFeedback, self).__init__()
         self.risk_flag = 0
         self.safe_flag = 0

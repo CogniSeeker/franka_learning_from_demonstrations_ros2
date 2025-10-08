@@ -1,5 +1,5 @@
 import numpy as np
-import quaternion
+from quaternion import quaternion
 from copy import deepcopy
 
 def from_euler_angles(roll, pitch, yaw):
@@ -10,7 +10,7 @@ def from_euler_angles(roll, pitch, yaw):
     cy = np.cos(yaw * 0.5)
     sy = np.sin(yaw * 0.5)
 
-    q = np.quaternion(0, 0, 0, 0)
+    q = quaternion(0, 0, 0, 0)
     q.w = cr * cp * cy + sr * sp * sy
     q.x = sr * cp * cy - cr * sp * sy
     q.y = cr * sp * cy + sr * cp * sy
@@ -84,7 +84,7 @@ def quaternion_product(q1, q2):
     b = q1.w*q2.x + q1.x*q2.w + q1.y*q2.z - q1.z*q2.y
     c = q1.w*q2.y - q1.x*q2.z + q1.y*q2.w + q1.z*q2.x
     d = q1.w*q2.z + q1.x*q2.y - q1.y*q2.x + q1.z*q2.w
-    qout = np.quaternion(0, 0, 0, 0)
+    qout = quaternion(0, 0, 0, 0)
     qout.w = a
     qout.x = b
     qout.y = c
@@ -107,7 +107,7 @@ def quaternion_divide(q1, q2):
     b = (-q1.w*q2.x + q1.x*q2.w - q1.y*q2.z + q1.z*q2.y) / q2norm
     c = (-q1.w*q2.y + q1.x*q2.z + q1.y*q2.w - q1.z*q2.x) / q2norm
     d = (-q1.w*q2.z - q1.x*q2.y + q1.y*q2.x + q1.z*q2.w) / q2norm
-    qout = np.quaternion(0, 0, 0, 0)
+    qout = quaternion(0, 0, 0, 0)
     qout.w = a
     qout.x = b
     qout.y = c

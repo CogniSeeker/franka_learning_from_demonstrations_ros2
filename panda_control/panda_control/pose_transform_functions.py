@@ -1,11 +1,12 @@
 import numpy as np
-import quaternion
+from quaternion import quaternion
 import warnings
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from geometry_msgs.msg import PoseStamped, Pose
+import math
 
 def orientation_2_quaternion(orientation):
-    return np.quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
+    return quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
 
 def position_2_array(position):
     return np.array([position.x, position.y, position.z])
@@ -58,7 +59,7 @@ def transform_pos_ori(pos: np.array, ori, transform):
     return transformed_pos[:3], transformed_ori_array
 
 def list_2_quaternion(quaternion_list: list):
-    return np.quaternion(quaternion_list[0], quaternion_list[1], quaternion_list[2], quaternion_list[3])
+    return quaternion(quaternion_list[0], quaternion_list[1], quaternion_list[2], quaternion_list[3])
 
 def transform_between_poses(pose2: PoseStamped, pose1: PoseStamped):
     pose1_matrix = pose_st_2_transformation(pose1)
@@ -117,3 +118,35 @@ def invert_tf(T):
     T_inv[:3, :3] = R_inv
     T_inv[:3,  3] = t_inv
     return T_inv
+
+
+def q_norm(wxyz):
+    q = np.array(wxyz, dtype=float)
+    n = np.linalg.norm(q)
+    if n == 0: return np.array([1.0,0.0,0.0,0.0])
+    q /= n
+    if q[0] < 0: q = -q  # shortest-path hemisphere
+    return q
+
+def q_angle(q0, q1):
+    dot = float(np.clip(np.dot(q0, q1), -1.0, 1.0))
+    return 2.0 * math.acos(abs(dot))
+
+def q_slerp(q0, q1, t):
+    dot = float(np.clip(np.dot(q0, q1), -1.0, 1.0))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+    if dot > 0.9995:
+        q = q0 + t*(q1 - q0)
+        return q / np.linalg.norm(q)
+    th0 = math.acos(dot)
+    st0 = math.sin(th0)
+    th = th0 * t
+    s0 = math.sin(th0 - th) / st0
+    s1 = math.sin(th) / st0
+    return s0*q0 + s1*q1
+
+def build_quat_seq(q0, q1, N):
+    ts = np.linspace(0.0, 1.0, N)
+    return np.stack([q_slerp(q0, q1, t) for t in ts], axis=0)

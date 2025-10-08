@@ -12,6 +12,7 @@ from geometry_msgs.msg import Point, Quaternion
 from skills_manager.ros_param_manager import get_remote_parameters
 import math
 import spatialmath as sm
+from quaternion import quaternion
 
 class Transform():
     def __init__(self):
@@ -33,7 +34,7 @@ class Transform():
         position = Point(x=pose[0], y=pose[1], z=pose[2])
         orientation = Quaternion(x=pose[3], y=pose[4], z=pose[5], w=pose[6])
         trans_home_pose = np.array([position.x, position.y, position.z])
-        quat_home_pose = np.quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
+        quat_home_pose = quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
         self.home_pose = pos_quat_2_pose_st(trans_home_pose, quat_home_pose)
         transform_new = pose_st_2_transformation(self.curr_pose)
         home_pose_matrix = pose_st_2_transformation(self.home_pose)
@@ -60,7 +61,7 @@ class Transform():
         return transform
 
     @staticmethod
-    def step_toward_roll(q_pre, roll_target=math.pi, alpha=0.12):
+    def step_toward_roll(q_pre, roll_target=math.pi, alpha=0.45):
         """
         Move a fraction (alpha in 0..1) from q_pre toward pose with the same yaw/pitch
         but roll = roll_target (body-frame ZYX convention). Returns a new quaternion.

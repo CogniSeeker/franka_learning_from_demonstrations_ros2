@@ -74,14 +74,13 @@ class CameraFeedback():
 
         # self.resized_img_gray=image_process(self.ds_factor,  0, 1, 0, 1)
         self.resized_img_gray=image_process(self.curr_image, self.ds_factor,  self.row_crop_pct_top , self.row_crop_pct_bot, self.col_crop_pct_left, self.col_crop_pct_right)
-        # idx=np.argmin(np.linalg.norm(self.recorded_traj-(self.curr_pos).reshape(3,1),axis=0))
         idx = self.time_index - 1
 
         # initiate SIFT detector
         sift = cv2.SIFT_create()
 
         # find the keypoints and descriptors with SIFT
-        kp1, des1 = sift.detectAndCompute(self.recorded_img[idx], None)
+        kp1, des1 = sift.detectAndCompute(self.loaded_img[idx], None)
         kp2, des2 = sift.detectAndCompute(self.resized_img_gray, None)
 
         FLANN_INDEX_KDTREE = 0
@@ -156,10 +155,10 @@ class CameraFeedback():
                 row_idx_end = int(h * self.row_crop_pct_bot)
                 col_idx_start= int(w * self.col_crop_pct_left)
                 col_idx_end = int(w * self.col_crop_pct_right)
-                padded_template[row_idx_start:row_idx_end, col_idx_start:col_idx_end] = self.recorded_img[idx]
+                padded_template[row_idx_start:row_idx_end, col_idx_start:col_idx_end] = self.loaded_img[idx]
                 self._annoted_image = cv2.drawMatches(padded_template, kp1, self.resized_img_gray, kp2, good_feature, None, **draw_params)
-                recorded_image_msg = self.bridge.cv2_to_imgmsg(self._annoted_image)
-                self.current_template_pub.publish(recorded_image_msg)  
+                loaded_image_msg = self.bridge.cv2_to_imgmsg(self._annoted_image)
+                self.current_template_pub.publish(loaded_image_msg)  
             except Exception as e:
                 print(e)
 
