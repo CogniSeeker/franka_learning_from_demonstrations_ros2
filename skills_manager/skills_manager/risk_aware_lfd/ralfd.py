@@ -1,17 +1,17 @@
 
-import pathlib
-from typing import Iterable, Tuple
-import cv2, os
+from dataclasses import dataclass
+import pathlib, cv2, os, time, math
 import numpy as np
-import risk_estimation
-from risk_estimation.scripts.result_img_save import sample_and_save_on_video
+from typing import Iterable, Tuple
+from copy import deepcopy
 
 from video_embedding.utils import get_session, number_of_saved
 
-from skills_manager.camera_feedback import image_process
 from skills_manager.lfd import LfD
 from skills_manager.risk_aware_lfd.risk_policy import *
-from skills_manager.feedback import Feedback, RiskAwareFeedback
+from skills_manager.feedback import RiskAwareFeedback
+import trajectory_data
+from panda_control.pose_transform_functions import pos_quat_2_pose_st, list_2_quaternion
 
 import rclpy
 from std_msgs.msg import Float32, String
@@ -20,14 +20,19 @@ import torch
 from playsound import playsound
 from threading import Thread
 
-from video_embedding.utils import get_trajectory_path
+EXPECTED_TARGET_STATE_PUB_FREQ = 0.15 # sec
 
-import time
-import trajectory_data
+@dataclass
+class Request():
+    action: str = "play"
+    timestep: int = 0
+    task_name: str = ""
+    valid_actions = {"play", "rec", "done"}
 
-from panda_control.pose_transform_functions import orientation_2_quaternion, pose_st_2_transformation, position_2_array, pos_quat_2_pose_st, transformation_2_pose, transform_pose, list_2_quaternion, transform_pos_ori, invert_tf
+    def __post_init__(self):
+        if self.action not in self.valid_actions:
+            raise ValueError(f"Invalid action: '{self.action}'. Valid actions are: {self.valid_actions}")
 
-from pathlib import Path
 
 class RALfD(RiskAwareFeedback, LfD):
 
@@ -39,25 +44,21 @@ class RALfD(RiskAwareFeedback, LfD):
             risk_patience (int): How many risky samples next to each other to trigger risk. Defaulting to 2.
         """        
         super(RALfD, self).__init__()
-
         self.create_subscription(String, "/target_state", self.target_state_callback, 5)
 
         self.risk_policy = eval(estimator_risk_policy)(risk_patience)
-        
-        self.haptic_buzz_pub = self.create_publisher(Float32, "/haptic_feedback", 5)
 
         self.target_state = ""
         self.last_target_state = 0.0
+
+        # self.haptic_buzz_pub = self.create_publisher(Float32, "/haptic_feedback", 5)
 
     def target_state_callback(self, msg):
         self.last_target_state = time.time()
         self.target_state = msg.data
 
     def skill_exists(self, name):
-        return os.path.isfile(f"{get_trajectory_path()}/trajectories/{get_session()}/{name}.npz")
-
-    def vibrate(self):
-        self.haptic_buzz_pub.publish(Float32(0.5))
+        return os.path.isfile(f"{trajectory_data.package_path}/trajectories/{get_session()}/{name}.npz")
 
     def init_additional_flags(self):
         self.recorded_risk_flag = np.array([0])
@@ -69,126 +70,114 @@ class RALfD(RiskAwareFeedback, LfD):
         self.recorded_safe_flag = np.c_[self.recorded_safe_flag, self.safe_flag]
         self.recorded_novelty_flag = np.c_[self.recorded_novelty_flag, self.novelty_flag]
 
-    def get_time_phase(self, default_traj_len: int = 400):
-        """ (Time Frame / trajectory_len)
+    # def get_observations(self) -> Tuple[torch.tensor, None, None, None, torch.tensor]:
+    #     """Collect current observations as Enum list:
+    #     [1. Image, 2. Risk, 3. Safe, 4. Novelty, 5. Time Phase]
 
-        Args:
-            default_traj_len (int, optional): Is used when trajectory recording. Defaults to 400.
-        """        
+    #     Returns:
+    #         Tuple[torch.tensor, None, None, None, torch.tensor]
+    #     """
+
+    #     last_image_square = cv2.resize(self.pub_rec_image(), (64, 64), interpolation=cv2.INTER_AREA)
+    #     last_image_square = last_image_square[np.newaxis, np.newaxis, :, :] # (x, 1, 64, 64)
+
+    #     frame_number = np.array([self.time_phase]) # (x, 1)
+    #     frame_number = frame_number[np.newaxis,:]
+
+    #     return [
+    #         torch.tensor(last_image_square, dtype=torch.float32).cuda(), # 1. Image
+    #         None, # 2. Risk Label flag
+    #         None, # 3. Safe Label flag
+    #         None, # 4. Novelty Label flag
+    #         torch.tensor(frame_number, dtype=torch.float32).cuda() # 5. Frame number normalized (0-1)
+    #     ]
+
+    def play_skill(self, name_skill, object_template_name, localize_box=True):
+        if localize_box:
+            if not self.set_localizer_client.wait_for_service(timeout_sec=5.0):
+                raise Exception("Service not available after waiting")
+            ret = self.set_localizer_client.call(SetTemplate.Request(template_name=object_template_name))
+            if not ret.success:
+                print("Returned because localizer not succesful", flush=True)
+                return
+            self.move_template_start()
+            self.active_localizer_client.call(Trigger.Request())
+            self.compute_final_transform() 
+
         try:
-            trajectory_len = self.trajectory_len
-        except AttributeError:
-            trajectory_len = default_traj_len
+            request = Request(task_name = name_skill)
+            while request.action != "done":
+                print(f"New request: {request}")
+                if request.action == "play":
+                    self.show(request.task_name)
+                    self.load(request.task_name)
+                    new_request = self.execute()
+                    self.save(request.task_name, risk_exec_trial=True)
+                
+                elif request.action == "rec":
+                    self.traj_rec()
+                    self.save(request.task_name, risk_exec_trial=False)
+                    new_request = Request(action="done")
 
-        try:
-            self.time_index
-        except AttributeError:
-            self.time_index = 0.0
+                else: raise Exception("action not valid")
 
-        return self.time_index / trajectory_len
+                request = new_request # update request
 
+        except KeyboardInterrupt:
+            print("Keyboard interrupted", flush=True)
+        return
 
-    def get_observations(self) -> Tuple[torch.tensor, None, None, None, torch.tensor]:
-        """Collect current observations as Enum list:
-        [1. Image, 2. Risk, 3. Safe, 4. Novelty, 5. Time Phase]
-
-        Returns:
-            Tuple[torch.tensor, None, None, None, torch.tensor]
-        """
-
-        last_image_square = cv2.resize(self.get_rec_image(), (64, 64), interpolation=cv2.INTER_AREA)
-        last_image_square = last_image_square[np.newaxis, np.newaxis, :, :] # (x, 1, 64, 64)
-
-        frame_number = np.array([self.get_time_phase()]) # (x, 1)
-        frame_number = frame_number[np.newaxis,:]
-
-        return [
-            torch.tensor(last_image_square, dtype=torch.float32).cuda(), # 1. Image
-            None, # 2. Risk Label flag
-            None, # 3. Safe Label flag
-            None, # 4. Novelty Label flag
-            torch.tensor(frame_number, dtype=torch.float32).cuda() # 5. Frame number normalized (0-1)
-        ]
-
-    def communicate_recovery_action(self):
-        music_thread = Thread(target=self.play_recovery_action)
-        music_thread.start()
-
-    def play_recovery_action(self):
-        playsound(f'{risk_estimation.path}/sounds/device-added.oga')
-    
-    def communicate_risk_detected(self):
-        music_thread = Thread(target=self.play_risk_detected)
-        music_thread.start()
-        # self.vibrate()
-
-    def play_risk_detected(self):
-        playsound(f'{risk_estimation.path}/sounds/dialog-warning.oga')
-        playsound(f'{risk_estimation.path}/sounds/dialog-warning.oga')
-        playsound(f'{risk_estimation.path}/sounds/dialog-warning.oga')
-
-    def get_current_branch(self):
-        try:
-            return int(self.filename.split("_")[-1])
-        except ValueError:
-            return 0
-
-    def execute(self):
+    def execute(self) -> Request:
         ''' Has trajectory at self.loaded_traj, self.loaded_ori
         '''
-        start = self.player_init()
+        self.player_init()
         self.recorded_risk_flag = np.array([0])
         self.recorded_safe_flag = np.array([0])
         self.recorded_novelty_flag = np.array([0])
 
+        while (time.time() - self.last_target_state) > EXPECTED_TARGET_STATE_PUB_FREQ:
+            print("waiting for target state", flush=True)
+            self.pub_rec_image()
+            time.sleep(1.0)
+
         while self.time_index <( self.loaded_traj.shape[1]) and rclpy.ok() and not self.end:
             try:
                 t0 = time.perf_counter()
+                vel = 0
+                init_pos = deepcopy(self.curr_pos)
                 while(self.pause):
                     self.r.sleep()
                     
-                    if self.take_control: # user take control
-                        print("branch request")
-                        return ("branch request at", self.time_index, f"{self.filename}_branch_at_{self.time_index}")
-                        
-                    # if self.continue_feedback:
-                    #     self.save_these_img_data()
-                    #     break
-
-                    # if self.switch_flag:
-                        
-                    #     branch: str = self.generate_closest_branch_name()
-
-                    #     self.load(branch)
-                    #     self.time_index = 0
-                    #     self.execute()
-                    #     return
-
+                    if self.end or not rclpy.ok(): # user take control
+                        return Request(action="rec", timestep=self.time_index, task_name=f"{self.filename}_branch_at_{self.time_index}")
+                    
+                    vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
+                    if vel > 0.02:
+                        print("Robot was moved manually! Continuing")
+                        self.pause = False
 
                 self.recorded_risk_flag = np.c_[self.recorded_risk_flag, self.risk_flag]
                 self.recorded_safe_flag = np.c_[self.recorded_safe_flag, self.safe_flag]
                 self.recorded_novelty_flag = np.c_[self.recorded_novelty_flag, self.novelty_flag]
-                if self.player_step(start) == 'stop':
-                    break
-
+                self.player_step()
+                
                 # anomaly, suggested_branch = self.target_state
                 anomaly = False
-                suggested_branch = 0
-                print(self.target_state)
-
+                suggested_branch = self.filename
                 self.pause |= anomaly
 
-                curr_branch: int = self.get_current_branch()
                 # system switches branch
-                print(f"[step {self.time_index}] now: {curr_branch} -> suggested: {suggested_branch}. anomaly: {anomaly}")
-                if False: #int(suggested_branch) != int(curr_branch):
-                    self.load(self.get_branch(suggested_branch))
-                    self.time_index = 0
-                    self.execute()
-
-                print(f"{round(1.0 / (time.perf_counter()-t0))} samples per second")
+                curr_branch: str = self.filename
+                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {anomaly}")
+                if suggested_branch != curr_branch:
+                    return Request(action="play", timestep=self.time_index, task_name=suggested_branch)
             except rclpy.exceptions.ROSInterruptException:
-                break
+                print("manually interrupted", flush=True)
+        
+        if self.time_index < self.loaded_traj.shape[1]: # not finished ending
+            return Request(action="rec", timestep=self.time_index, task_name=f"{self.filename}_branch_at_{self.time_index}")
+
+        return Request(action="done", timestep=self.time_index, task_name=self.filename)
 
     def go_to_time_index(self, time_index: int, linear: bool = False):
         """
@@ -212,16 +201,8 @@ class RALfD(RiskAwareFeedback, LfD):
         else:
             self.move_to_pose_with_stampedpose(goal)
             # self.goal_pub.publish(goal)
-
- 
-    def finished_correctly(self):
         
-        if self.time_index == self.loaded_traj.shape[1]:
-            return True
-        else:
-            return False
-        
-    def save(self, file: str='last', risk_exec_trial: bool = False):
+    def save(self, file: str='last', risk_exec_trial: bool = False, tag: str = ""):
         """Saves Trajectory data to file
         If video_embedder and risk_estimator specified, then it is sampled and saved as video.
 
@@ -236,47 +217,40 @@ class RALfD(RiskAwareFeedback, LfD):
         
         if risk_exec_trial:
             n = number_of_saved(file, "trial") # trials 0, ..., n-1 exists
-
-            pathlib.Path(f"{get_trajectory_path()}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
-            np.savez(f"{get_trajectory_path()}/trajectories/{get_session()}/{file}_trial_{n}.npz",
-                 traj=              self.recorded_traj,
-                 ori=               self.recorded_ori,
-                 grip=              self.recorded_gripper,
-                 img=               self.recorded_img, 
-                 img_feedback_flag= self.recorded_img_feedback_flag,
-                 spiral_flag=       self.recorded_spiral_flag,
-                 risk_flag=         self.recorded_risk_flag,
-                 safe_flag=         self.recorded_safe_flag,
-                 novelty_flag=      self.recorded_novelty_flag,
-                )
-            
-            # if self.sl.video_embedder is not None and self.sl.risk_estimator is not None and self.sl.feature_extractor is not None:
-            #     sample_and_save_on_video(f"{file}_trial_{n}", self.sl.video_embedder, self.sl.risk_estimator, self.sl.feature_extractor)
-
+            added_file_suffix = f"_trial_{n}"
         else:
-            self.recorded_safe_flag = np.ones((self.recorded_safe_flag.shape))
-            self.recorded_safe_flag[self.recorded_risk_flag != 0] = 0
+            added_file_suffix = ""
 
-            pathlib.Path(f"{get_trajectory_path()}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
-            np.savez(f"{get_trajectory_path()}/trajectories/{get_session()}/{file}.npz",
-                 traj=self.recorded_traj,
-                 ori=self.recorded_ori_wxyz,
-                 grip=self.recorded_gripper,
-                 img=self.recorded_img, 
-                 img_feedback_flag=self.recorded_img_feedback_flag,
-                 spiral_flag=self.recorded_spiral_flag,
-                 risk_flag=self.recorded_risk_flag,
-                 safe_flag=self.recorded_safe_flag,
-                 novelty_flag=self.recorded_novelty_flag,)
+        pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
+        np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
+                traj=              self.recorded_traj,
+                ori=               self.recorded_ori_wxyz,
+                grip=              self.recorded_gripper,
+                img=               self.recorded_img, 
+                img_feedback_flag= self.recorded_img_feedback_flag,
+                spiral_flag=       self.recorded_spiral_flag,
+                risk_flag=         self.recorded_risk_flag,
+                safe_flag=         self.recorded_safe_flag,
+                novelty_flag=      self.recorded_novelty_flag,
+                tag = tag,
+            )
+        
+        #if risk_exec_trial:
+        #     if self.sl.video_embedder is not None and self.sl.risk_estimator is not None and self.sl.feature_extractor is not None:
+        #         sample_and_save_on_video(f"{file}_trial_{n}", self.sl.video_embedder, self.sl.risk_estimator, self.sl.feature_extractor)
             
     def load(self, file='last'):
-        data = np.load(f"{get_trajectory_path()}/trajectories/{get_session()}/{file}.npz")
+        data = np.load(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz")
         self.loaded_traj = data['traj']
         self.loaded_ori_wxyz = data['ori']
         self.loaded_gripper = data['grip']
         self.loaded_img = data['img']
         self.loaded_img_feedback_flag = data['img_feedback_flag']
         self.loaded_spiral_flag = data['spiral_flag']
+        if 'tag' not in data.keys():
+            self.tag = ""
+        else:
+            self.tag = str(data['tag'])
 
         if 'risk_flag' not in data.keys():
             self.loaded_risk_flag = np.zeros(data['grip'].shape)
@@ -297,3 +271,15 @@ class RALfD(RiskAwareFeedback, LfD):
             self.loaded_traj, self.loaded_ori_wxyz = self.transform_traj_ori(self.loaded_traj, self.loaded_ori_wxyz, self.final_transform)
         
         self.filename=str(file) 
+
+    # def vibrate(self):
+    #     self.haptic_buzz_pub.publish(Float32(data=0.5))
+
+    def communicate_risk_detected(self):
+        music_thread = Thread(target=self.play_risk_detected)
+        music_thread.start()
+        # self.vibrate()
+
+    def play_risk_detected(self):
+        for _ in range(3):
+            playsound('/usr/share/sounds/gnome/default/alerts/glass.ogg')

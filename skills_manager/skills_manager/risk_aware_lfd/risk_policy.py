@@ -7,7 +7,7 @@ class RiskPolicy:
         self.prev_risky_estimations = 0
 
     def do(self, lfd, clf_risk: bool, human_risk: bool) -> Tuple[str, float]:
-        return "continue", lfd.get_time_phase()
+        return "continue", lfd.time_phase
     
     def merge_risks(self, clf_risk: bool, human_risk: bool) -> bool:
         """Either risk activates risk policy.
@@ -40,7 +40,7 @@ class RiskPolicy:
                 alpha = 0.0
                 return "repeat", alpha
             elif lfd.safe_flag:
-                return "continue", lfd.get_time_phase()
+                return "continue", lfd.time_phase
             elif lfd.recovery_phase != -1.0:
                 return "continue", lfd.recovery_phase
 
@@ -58,7 +58,7 @@ class AbortRiskPolicy(RiskPolicy):
             lfd.communicate_risk()
             return "quit", 1.0 # point to end
         else:
-            return "continue", lfd.get_time_phase()
+            return "continue", lfd.time_phase
 
 
 class WaitForFeedbackRiskPolicy(RiskPolicy):
@@ -72,37 +72,5 @@ class WaitForFeedbackRiskPolicy(RiskPolicy):
             lfd.communicate_risk_detected()
             return self.wait_for_feedback(lfd)
         else:
-            return "continue", lfd.get_time_phase()
+            return "continue", lfd.time_phase
 
-
-class RecoveryRiskPolicy(RiskPolicy):
-    def do(self, lfd, clf_risk: bool, human_risk: bool) -> str:
-        if self.apply_patience(self.merge_risks(clf_risk, human_risk)):
-            # Detected risk at h
-            h, _ = lfd.sl.feature_extractor.extract(lfd.get_observations(), lfd.sl.video_embedder)
-            alpha, std = lfd.sl.recovery_state_finder.sample(h)
-
-            lfd.communicate_recovery_action()
-            print(f"Returning to {alpha}")
-            return "recover", alpha
-        else:
-            return "continue", lfd.get_time_phase()
-
-
-class InformedRecoverRiskPolicy(RiskPolicy):
-    def do(self, lfd, clf_risk: bool, human_risk: bool) -> str:
-        if self.apply_patience(self.merge_risks(clf_risk, human_risk)):
-            # Detected risk at h
-            h, _ = lfd.sl.feature_extractor.extract(lfd.get_observations(), lfd.sl.video_embedder)
-
-            alpha, std = lfd.sl.recovery_state_finder.sample(h)
-
-            if std < 0.5:
-                lfd.communicate_recovery_action()
-                print(f"Returning to {alpha}")
-                return "recover", alpha
-            else:
-                print(f"Waiting for feedback, because std is {std}, alpha is {alpha}")
-                return self.wait_for_feedback(lfd)
-        else:
-            return "continue", lfd.get_time_phase()

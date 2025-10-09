@@ -226,10 +226,6 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         except KeyboardInterrupt:
             return
 
-    @property
-    def take_control(self):
-        return not (sum(self.feedback) == 0) or self.end # if feedback is zeroes -> no control # self.end is for kinesthetic teaching button detection
-
     def keyboard_on_release(self, key):
         pass
 
@@ -359,7 +355,6 @@ class RiskAwareFeedback(Feedback):
         self.safe_flag = 0
         self.novelty_flag = 0
         self.recovery_phase = -1.
-        self.switch_flag = False
 
         try:
             self.button_press_mode
@@ -412,11 +407,7 @@ class RiskAwareFeedback(Feedback):
         for i in range(10):
             if key == KeyCode.from_char(str(i)):
                 fraction = float(i) / 10
-                try:
-                    trajectory_len = self.trajectory_len
-                except AttributeError:
-                    trajectory_len = 400
-                self.target_time_index = int(fraction * trajectory_len)
+                self.target_time_index = int(fraction * self.loaded_trajectory_len)
                 self.recovery_phase = fraction
 
         super().keyboard_on_press(key)
@@ -440,11 +431,7 @@ class RiskAwareFeedback(Feedback):
         for i in range(10):
             if key == KeyCode.from_char(str(i)):
                 fraction = float(i) / 10
-                try:
-                    trajectory_len = self.trajectory_len
-                except AttributeError:
-                    trajectory_len = 400
-                self.target_time_index = int(fraction * trajectory_len)
+                self.target_time_index = int(fraction * self.loaded_trajectory_len)
                 self.recovery_phase = fraction
 
         super().keyboard_on_press(key)

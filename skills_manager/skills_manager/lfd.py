@@ -5,7 +5,10 @@ from quaternion import quaternion
 import numpy as np
 import tf2_ros
 from skills_manager.camera_feedback import CameraFeedback, image_process
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
+from lfd_msgs.srv import SetTemplate
+from std_srvs.srv import Trigger
+from std_msgs.msg import Int32
 from panda_control import Panda, SpinningRosNode
 from skills_manager.feedback import Feedback
 from skills_manager.insertion import Insertion
@@ -13,22 +16,14 @@ from skills_manager.transfom import Transform
 from panda_control.pose_transform_functions import position_2_array, pos_quat_2_pose_st, list_2_quaternion, invert_tf
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 from skills_manager.ros_param_manager import get_remote_parameters
-import trajectory_data
 from copy import deepcopy
 import spatialmath as sm
-
-from lfd_msgs.srv import SetTemplate
-from std_srvs.srv import Trigger
-from std_msgs.msg import Int32
-
+import trajectory_data
 from trajectory_data.skill_visualizer import show_skill
-class SkillVis():
-    def show_skill(self, name_skill: str):
-        if name_skill[-4:] != ".npz":
-            name_skill = name_skill + ".npz"
-        show_skill(name_skill)
 
-from geometry_msgs.msg import Pose, PoseStamped, Point, Quaternion
+class SkillVis():
+    def show(self, name_skill: str):
+        show_skill(name_skill)
 
 class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode, SkillVis):
     def __init__(self):
@@ -45,22 +40,28 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.loaded_ori_qxyz = None
 
         self.end = False
+        self.filename = ""
 
         self.insertion_force_threshold = 6
         self.retry_counter = 0
+        self.time_index = 0
 
         self.set_localizer_client = self.create_client(SetTemplate, 'set_localizer', callback_group=self.callback_group)
         self.active_localizer_client = self.create_client(Trigger, 'active_localizer', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
         self.start_publishing_scene_call = self.create_client(Trigger, 'start_publishing_scene', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
         self.stop_publishing_scene_call = self.create_client(Trigger, 'stop_publishing_scene', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
 
-        self.timestep_pub = self.create_publisher(Int32, "/timestep", 5)
-
         time.sleep(1)
 
     @property
-    def loaded_traj_n(self):
+    def loaded_trajectory_len(self):
         return 0 if self.loaded_traj is None else self.loaded_traj.shape[1]
+
+    @property
+    def time_phase(self):
+        if self.loaded_trajectory_len == 0: return 0
+
+        return self.time_index / self.loaded_trajectory_len
 
     def traj_rec(self, trigger: float = 0.005, roll_redution_alpha: float = 0.4):
         """ Demonstrate a trajectory with either joystic, gestures, or kinesthetic teaching.
@@ -75,8 +76,10 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         Args:
             roll_reduction_alpha: float. When controlled externally (joystick/gestures), we let roll->0 as the user cannot control it.
         """
-        self.end = False
-        self.pause = False
+        while self.end or self.pause:
+            self.end = False
+            self.pause = False
+            time.sleep(0.1)
         self.set_stiffness(0,0,0,0,0,0,0)
 
         init_pos = self.curr_pos
@@ -104,7 +107,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
         self.init_additional_flags()
-        self.recorded_img = self.get_rec_image()
+        self.recorded_img = self.pub_rec_image()
 
         print("Recording started. Press e to stop.")
         while not self.end:
@@ -115,7 +118,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_traj = np.c_[self.recorded_traj, self.curr_pos]
             self.recorded_ori_wxyz  = np.c_[self.recorded_ori_wxyz, self.curr_ori_wxyz]
             self.recorded_gripper = np.c_[self.recorded_gripper, self.grip_value]
-            self.recorded_img = np.r_[self.recorded_img, self.get_rec_image()]
+            self.recorded_img = np.r_[self.recorded_img, self.pub_rec_image()]
             
             self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
@@ -236,21 +239,17 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
             ret = self.set_localizer_client.call(SetTemplate.Request(template_name=object_template_name))
             if not ret.success:
                 print("Returned because localizer not succesful", flush=True)
-                return False
+                return
             self.move_template_start()
             self.active_localizer_client.call(Trigger.Request())
             self.compute_final_transform() 
-        else:
-            pass # move to start?
-
         try:
             self.load(name_skill)
             print(f"Execution", flush=True)
-            return self.execute()
+            self.execute()
         except KeyboardInterrupt:
-            return False
-        return True
-
+            print("Keyboard interrupted", flush=True)
+        
     def move_template_start(self):
         pose = get_remote_parameters(self, param_names=[
             "position_x", "position_y", "position_z", 
@@ -275,24 +274,24 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
     # player
     def execute(self):
-        start = self.player_init()
-        while self.time_index <( self.loaded_traj_n):
-            self.player_step(start)
-
+        self.player_init()
+        while self.time_index <( self.loaded_trajectory_len):
+            self.player_step()
 
     def gripper_step(self, target_gripper: float):
         
         if self.is_open(target_gripper) and not self.is_open():
             self.move_gripper(0.08)
-        print(self.is_open(target_gripper), self.is_open(), self.is_grasped())
+        
         if not self.is_open(target_gripper) and self.is_open():
             if not self.is_grasped():
                 self.grasp_gripper(0.0)
 
-    def get_rec_image(self):
+    def pub_rec_image(self):
         resized_img_gray=image_process(self.curr_image, self.ds_factor,  self.row_crop_pct_top , self.row_crop_pct_bot, self.col_crop_pct_left, self.col_crop_pct_right)
         
         resized_img_msg = self.bridge.cv2_to_imgmsg(resized_img_gray)
+        resized_img_msg.header.frame_id = str(self.time_index) # frame_id is set to timestep index
         self.cropped_img_pub.publish(resized_img_msg)
 
         return resized_img_gray.reshape((1, resized_img_gray.shape[0], resized_img_gray.shape[1]))
@@ -317,22 +316,19 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         
         self.gripper_step(self.loaded_gripper[0][0])            
         
-        self.trajectory_len = self.loaded_traj.shape[1]
-
         # init recording of new execution attempt
         self.recorded_traj = self.curr_pos
-        self.recorded_ori = self.curr_ori_xyzw
+        self.recorded_ori_wxyz = self.curr_ori_wxyz
         self.recorded_gripper = self.grip_value
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
-        self.recorded_img = self.get_rec_image()
+        self.recorded_img = self.pub_rec_image()
 
         return start
 
-    def player_step(self, start: PoseStamped):
+    def player_step(self):
         assert self.loaded_traj is not None, "Trajectory not loaded"
 
-        self.timestep_pub.publish(Int32(data=int(self.time_index)))
         quat_goal = list_2_quaternion(self.loaded_ori_wxyz[:, self.time_index])
         goal = pos_quat_2_pose_st(self.loaded_traj[:, self.time_index] + self.camera_correction, quat_goal)
         goal.header.stamp = self.get_clock().now().to_msg()
@@ -369,24 +365,19 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
                 return 'stop'
                 
-            self.go_to_pose(start)
+            self.go_to_pose(start) # PoseStamped
             self.time_index = 0
             self.retry_counter = self.retry_counter + 1
         self.r.sleep()
 
         # save step sample
         self.recorded_traj = np.c_[self.recorded_traj, self.curr_pos]
-        self.recorded_ori  = np.c_[self.recorded_ori, self.curr_ori_xyzw]
+        self.recorded_ori_wxyz  = np.c_[self.recorded_ori_wxyz, self.curr_ori_wxyz]
         self.recorded_gripper = np.c_[self.recorded_gripper, self.grip_value]
 
-        self.recorded_img = np.r_[self.recorded_img, self.get_rec_image()]
+        self.recorded_img = np.r_[self.recorded_img, self.pub_rec_image()]
         self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
         self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
-
-        # Stop playback if at end of trajectory (some indices might be deleted by feedback)
-        if self.time_index == self.loaded_traj.shape[1]-1:
-            return 'stop'
-
 
     def start_publishing_scene(self):
         self.start_publishing_scene_call.call(Trigger.Request())

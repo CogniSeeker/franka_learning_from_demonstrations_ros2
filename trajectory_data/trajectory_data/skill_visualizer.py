@@ -251,12 +251,22 @@ def save_trajectory_png(skill_file, out_png="trajectory.png"):
 def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
     """
     Minimal viewer for a single skill (no gripper, no template).
-    Uses your existing load_skill_data(...) and numpy_to_base64(...).
+    Uses existing load_skill_data(...) and numpy_to_base64(...).
 
     Usage:
         show_skill("my_skill.npz")                # file inside TRAJECTORIES_DIR
         show_skill("/abs/path/to/my_skill.npz")   # absolute path
     """
+    if skill_file[-4:] != ".npz":
+        skill_file = skill_file + ".npz"
+    
+    offset = 0
+    if "_branch_at_" in skill_file:
+        skill_file_without_npz = skill_file[:-4]
+        after_branch_at = skill_file_without_npz.split("_branch_at_")[-1]
+        offset_str = after_branch_at.split("_")[0]
+        offset = int(offset_str)
+
     # --- Load data (supports filename OR absolute path) ---
     if os.path.isabs(skill_file) or os.path.sep in skill_file:
         data_npz = np.load(skill_file)
@@ -266,21 +276,23 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
         }
         skill_label = os.path.basename(skill_file)
     else:
-        data = load_skill_data(skill_file)  # your existing helper (expects filename in TRAJECTORIES_DIR)
+        data = load_skill_data(skill_file)  # existing helper (expects filename in TRAJECTORIES_DIR)
         skill_label = skill_file
 
     traj = data['traj']
     images = data['images']
     grip = data['grip'].squeeze()
-
+    tag = ""
+    if "tag" in data.keys():
+        tag = str(data['tag'])
+    
     # Unique identity for this app instance
     app_id = str(uuid.uuid4())[:8]
     base_path = f"/{app_id}/"
     if port is None:
         port = _find_free_port(0)
 
-    # --- Build the same trajectory figure you already have ---
-    point_indices = np.arange(traj.shape[1])
+    point_indices = np.arange(traj.shape[1]) + offset
     trajectory_fig = go.Figure(
         data=[go.Scatter3d(
             x=traj[0,:],
