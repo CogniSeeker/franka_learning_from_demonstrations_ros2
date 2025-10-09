@@ -75,7 +75,8 @@ def load_skill_data(skill_file):
     return {
         'traj': data['traj.npy'],
         'grip': data['grip.npy'],
-        'images': data['img.npy']
+        'images': data['img.npy'],
+        'tag': data['tag.npy'],
     }
 
 def load_template(template_name):
@@ -273,6 +274,7 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
         data = {
             'traj': data_npz['traj.npy'],
             'images': data_npz['img.npy'],
+            'tag': data_npz['tag.npy'],
         }
         skill_label = os.path.basename(skill_file)
     else:
@@ -437,6 +439,27 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
                 style={'width': '49%', 'display': 'inline-block', 'verticalAlign': 'top'}
             ),
             html.Div([
+                html.Div([
+                    html.Span(
+                        tag if tag else "No tag",
+                        id="tag-pill",
+                        style={
+                            "display": "inline-block",
+                            "padding": "4px 10px",
+                            "borderRadius": "999px",
+                            "background": "#f0f4ff" if tag else "#f6f6f6",
+                            "color": "#1f3a93" if tag else "#999",
+                            "fontFamily": "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono'",
+                            "fontSize": "12px",
+                            "border": "1px solid #dbe3ff" if tag else "1px solid #e9e9e9",
+                            "marginRight": "8px"
+                        }
+                    ),
+                    html.Button("▶ Play 60 FPS", id="play-btn",
+                                style={"padding": "6px 10px", "borderRadius": "8px", "border": "1px solid #ddd",
+                                    "background": "#fafafa", "cursor": "pointer", "fontWeight": 600}),
+                    html.Span(id="play-status", style={"marginLeft": "10px", "color": "#666", "fontSize": "12px"})
+                ], style={"marginBottom": "8px"}),
                 html.Img(
                     id='trajectory-image',
                     style={
@@ -457,7 +480,55 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
         ])
     ], style={'padding': '6px', 'background-color': '#FFF'})
 
-    # --- Callback: click waypoint -> show corresponding image on the right ---
+    @app.callback(
+        Output("play-status", "children"),
+        Input("play-btn", "n_clicks"),
+        prevent_initial_call=True
+    )
+    def _play_clicked(n_clicks):
+        import uuid, time
+        import numpy as np
+        try:
+            vid = images
+            # Accept (N, H, W) or (N, C, H, W) -> take first channel
+            if vid.ndim == 4:
+                vid = vid[:, 0]
+
+            # Ensure memory layout is friendly for cv2 (avoids occasional no-op on subsequent runs)
+            vid = np.ascontiguousarray(vid)
+
+            # --- Hard reset OpenCV windows from prior run ---
+            try:
+                import cv2
+                cv2.destroyAllWindows()
+                # Pump the event loop a few times so HighGUI really releases
+                for _ in range(3):
+                    cv2.waitKey(1)
+                    time.sleep(0.01)
+            except Exception:
+                pass
+
+            # Unique window name so OpenCV reliably re-opens each time
+            win = f"Video-{uuid.uuid4().hex[:6]}"
+
+            # Play synchronously; when it returns, playback has finished
+            play_video(vid, fps=60, window_name=win, backend="cv2", scale=3.0)
+
+            # Extra cleanup to allow immediate re-run
+            try:
+                import cv2
+                cv2.destroyWindow(win)
+                for _ in range(3):
+                    cv2.waitKey(1)
+                    time.sleep(0.01)
+            except Exception:
+                pass
+
+            return "Finished playing."
+        except Exception as e:
+            print("play_video error:", e)
+            return f"Playback error: {e}"
+
     @app.callback(
         Output('trajectory-image', 'src'),
         Output('img-caption', 'children'),
@@ -519,3 +590,98 @@ def run():
 
 if __name__ == '__main__':
     run()
+
+
+def play_video(frames, fps=60, window_name="Video", scale=1.0, backend="auto"):
+    """
+    Play a grayscale video from a numpy array of shape (N, H, W) dtype=uint8.
+    Closes the window when finished (or if user presses Esc / q) and returns.
+
+    Args:
+        frames: np.ndarray, shape (N, H, W), dtype uint8
+        fps: target frames per second (default 60)
+        window_name: window title for display
+        scale: optional display scale factor (e.g., 2.0 to double size)
+        backend: "auto" | "cv2" | "matplotlib"
+    """
+    import numpy as np
+    import time
+
+    # Basic validation/fixes
+    if not isinstance(frames, np.ndarray) or frames.ndim != 3:
+        raise ValueError("frames must be a (N, H, W) numpy array")
+    if frames.dtype != np.uint8:
+        # convert safely (keeps 0-255 range)
+        frames = np.clip(frames, 0, 255).astype(np.uint8)
+
+    N, H, W = frames.shape
+    interval = 1.0 / float(fps)
+
+    def _cv2_player():
+        import cv2
+        # Optionally scale for visibility
+        if scale != 1.0:
+            new_size = (int(W * scale), int(H * scale))
+
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(window_name, int(W * scale), int(H * scale))
+
+        start = time.perf_counter()
+        for i in range(N):
+            img = frames[i]
+            if scale != 1.0:
+                img = cv2.resize(img, new_size, interpolation=cv2.INTER_NEAREST)
+
+            # Grayscale display
+            cv2.imshow(window_name, img)
+
+            # Drift-corrected pacing
+            target = start + (i + 1) * interval
+            # process events; keep waitKey tiny to avoid blocking
+            k = cv2.waitKey(1) & 0xFF
+            if k in (27, ord('q')):  # ESC or q quits early
+                break
+
+            sleep_time = target - time.perf_counter()
+            if sleep_time > 0:
+                # time.sleep is coarse but good enough for 60 FPS
+                time.sleep(sleep_time)
+
+        cv2.destroyWindow(window_name)
+
+    def _mpl_player():
+        # Matplotlib is usually slower; use only if cv2 isn't available
+        import matplotlib.pyplot as plt
+
+        plt.ion()
+        fig = plt.figure(window_name)
+        ax = fig.add_subplot(111)
+        im = ax.imshow(frames[0], cmap="gray", vmin=0, vmax=255, interpolation="nearest")
+        ax.set_axis_off()
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+
+        start = time.perf_counter()
+        for i in range(N):
+            im.set_data(frames[i])
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            target = start + (i + 1) * interval
+            sleep_time = target - time.perf_counter()
+            if sleep_time > 0:
+                plt.pause(sleep_time)  # non-blocking pause
+
+        plt.ioff()
+        plt.close(fig)
+
+    if backend in ("auto", "cv2"):
+        try:
+            import cv2  # noqa: F401
+            _cv2_player()
+            return
+        except Exception:
+            if backend == "cv2":
+                raise  # user explicitly requested cv2; bubble the error
+
+    # Fallback to matplotlib
+    _mpl_player()
