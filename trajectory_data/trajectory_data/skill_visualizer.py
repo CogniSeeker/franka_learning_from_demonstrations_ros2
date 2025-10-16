@@ -610,6 +610,9 @@ def play_video(frames, fps=60, window_name="Video", scale=1.0, backend="auto"):
     # Basic validation/fixes
     if not isinstance(frames, np.ndarray) or frames.ndim != 3:
         raise ValueError("frames must be a (N, H, W) numpy array")
+    if frames.shape[0] == 0:
+        print("no frames")
+        return
     if frames.dtype != np.uint8:
         # convert safely (keeps 0-255 range)
         frames = np.clip(frames, 0, 255).astype(np.uint8)
