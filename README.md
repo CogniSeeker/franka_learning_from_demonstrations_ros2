@@ -36,7 +36,7 @@ ros2 launch skills_manager home_launch.py height:="0.4"
 
 Record the current template for the localization 
 ``` bash
-ros2 launch object_localization record_template_launch.py template_name:="new_template"
+ros2 launch object_localization record_template_launch.py name_template:="new_template"
 ```
 ### Kinesthetic Demonstration 
 

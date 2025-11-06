@@ -1,7 +1,7 @@
 #%%
 #!/usr/bin/env python
 import time, math, time
-from quaternion import quaternion
+import quaternion
 import numpy as np
 import tf2_ros
 from skills_manager.camera_feedback import CameraFeedback, image_process
@@ -217,7 +217,6 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         pass
 
     def localize(self, object_template_name: str = ""):
-        """ DRAFT """
         if object_template_name == "":
             print("No given object_template_name", flush=True)
             return False
@@ -258,7 +257,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         assert pose[2] > 0.02
         pos_array = pose[:3]
-        quat_wxyz = quaternion(pose[3], pose[4], pose[5], pose[6])
+        quat_wxyz = quaternion.quaternion(pose[3], pose[4], pose[5], pose[6])
         
         goal = pos_quat_2_pose_st(pos_array, quat_wxyz)
         goal.header.stamp = self.get_clock().now().to_msg()
@@ -280,12 +279,16 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
     def gripper_step(self, target_gripper: float):
         
-        if self.is_open(target_gripper) and not self.is_open():
+        if self.is_open(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
+            print(f"griiper open: {self.is_open(target_gripper)} {self.is_open()}", flush=True)
             self.move_gripper(0.08)
-        
-        if not self.is_open(target_gripper) and self.is_open():
+        if not self.is_open(target_gripper) and self.is_open() and not self.gripper.read_once().is_grasped:
+            print("griiper close", flush=True)
             if not self.is_grasped():
+                print("grasp started, wait for the grasp end")
                 self.grasp_gripper(0.0)
+                print("grasp ended", flush=True)
+
 
     def pub_rec_image(self):
         resized_img_gray=image_process(self.curr_image, self.ds_factor,  self.row_crop_pct_top , self.row_crop_pct_bot, self.col_crop_pct_left, self.col_crop_pct_right)

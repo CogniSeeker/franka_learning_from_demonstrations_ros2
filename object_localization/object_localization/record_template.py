@@ -25,7 +25,7 @@ def main():
 
     try:
         template = Template()
-        param = template.panda.declare_parameter('template_name', "template")
+        param = template.panda.declare_parameter('name_template', "template")
         name_template, _ = extract_param_value(param.get_parameter_value())
         print("Recording template name: ", name_template, flush=True)
         template.record(name=name_template)

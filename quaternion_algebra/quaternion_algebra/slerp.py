@@ -1,5 +1,5 @@
 import numpy as np
-from quaternion import quaternion
+import quaternion
 from quaternion_algebra.algebra import inner, change_sign, quaternion_power, quaternion_product, quaternion_divide, quaternion_log, quaternion_absolute
 def slerp_with_power(q1, q2, tau):
     if inner(q1, q2) < 0:
@@ -61,7 +61,7 @@ def intrinsic(q1, q2):
         quaternionic.distance.rotation.chordal
 
         """
-    qtemp = quaternion()
+    qtemp = quaternion.quaternion()
     a = (q1.w - q2.w)**2 + (q1.x - q2.x)**2 + (q1.y - q2.y)**2 + (q1.z - q2.z)**2
     b = (q1.w + q2.w)**2 + (q1.x + q2.x)**2 + (q1.y + q2.y)**2 + (q1.z + q2.z)**2
     if b > a:

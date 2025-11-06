@@ -59,19 +59,14 @@ class FrankaOnPress():
         self.cross_release_act = False
         self.check_release_act = False
 
+        
+        # self.frankabuttons_start() # Franka buttons must be manually initialized now
+
+    def frankabuttons_start(self):
         self.desk.listen(self.franka_button_callback)
-
-    #     self.frankabuttons_start()
-
-    # def frankabuttons_start(self):
-    #     self.button_x_subscriber = self.create_subscription(Float32, '/franka_buttons/x', self.cb_x, 10)
-    #     self.button_y_subscriber = self.create_subscription(Float32, '/franka_buttons/y', self.cb_y, 10)
-    #     self.button_circle_subscriber = self.create_subscription(Bool, '/franka_buttons/circle', self.cb_circle, 10)
-    #     self.button_cross_subscriber = self.create_subscription(Bool, '/franka_buttons/cross', self.cb_cross, 10)
-    #     self.button_check_subscriber = self.create_subscription(Bool, '/franka_buttons/check', self.cb_check, 10)
-    '''
-    {'check': False, 'circle': False, 'cross': False, 'down': False, 'left': False, 'right': False, 'up': False}
-    '''
+        '''
+        {'check': False, 'circle': False, 'cross': False, 'down': False, 'left': False, 'right': False, 'up': False}
+        '''
 
     def franka_button_callback(self, event_dict):
         for key in event_dict:
@@ -229,6 +224,19 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
     def keyboard_on_release(self, key):
         pass
 
+    ## I must find better solution how to get the robot handle
+    @property
+    def _robot(self):
+        if self.__class__.__name__ == "LfD":
+            return self
+        elif hasattr(self, "LfD") and self.LfD is not None:
+            return self.LfD
+        elif hasattr(self, "LfD") and self.LfD is not None:
+            self.init_lfd()
+            return self.LfD
+        else:
+            print(f"No robot available", flush=True)
+
     def keyboard_on_press(self, key):
         # self.get_logger().info(f"Event happened, user pressed {key}")
         # This function runs on the background and checks if a keyboard key was pressed
@@ -251,19 +259,15 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
             self.correction_feedback[2] = -self.feedback_gain
         # Close/open gripper
         if key == KeyCode.from_char('c'):
-            try:
-                if not self.gripper_state.is_grasped:
-                    self.grasp_gripper(0)
+            if self._robot is not None:
+                if not self._robot.gripper_state.is_grasped:
+                    self._robot.grasp_gripper(0)
                 # self.gripper_feedback_correction = 1
-            except AttributeError:
-                print("No robot available", flush=True)
 
         if key == KeyCode.from_char('o'):
-            try:
-                self.move_gripper(0.08)
+            if self._robot is not None:
+                self._robot.move_gripper(0.08)
                 # self.gripper_feedback_correction = 1
-            except AttributeError:
-                print("No robot available", flush=True)
         if key == KeyCode.from_char('f'):
             self.correction_feedback[3] = 1
         if key == KeyCode.from_char('k'):
@@ -289,11 +293,11 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
 
             self.move_to_pose_with_stampedpose(goal)
             
-            self.set_stiffness(0, 0, 0, 50, 50, 50, 0)
+            self._robot.set_stiffness(0, 0, 0, 50, 50, 50, 0)
             print("higher rotatioal stiffness")
 
         if key == KeyCode.from_char('n'):    
-            self.set_stiffness(0, 0, 0, 0, 0, 0, 0)
+            self._robot.set_stiffness(0, 0, 0, 0, 0, 0, 0)
             print("zero rotatioal stiffness")
         if key == Key.space:
             self.pause=not(self.pause)

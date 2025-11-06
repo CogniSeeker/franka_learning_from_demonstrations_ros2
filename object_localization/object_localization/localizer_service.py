@@ -56,7 +56,7 @@ class LocalizationService(SpinningRosNode):
         res_poses = []
         for template_name in all_templates:
             try:
-                with open(f"{object_localization.package_path}/cfg/{template_name}/params.yaml") as f:
+                with open(f"{object_localization.package_path}/cfg/{name_template}/params.yaml") as f:
                     tf_dict = yaml.safe_load(f)
             except FileNotFoundError:
                 continue
@@ -64,7 +64,7 @@ class LocalizationService(SpinningRosNode):
             cropping = tf_dict['crop']
             depth = tf_dict['depth'] * 0.001
 
-            template_path = f"{object_localization.package_path}/cfg/{template_name}/full_image.png"
+            template_path = f"{object_localization.package_path}/cfg/{name_template}/full_image.png"
             localizer = Localizer(template_path, cropping, depth)
 
 
@@ -94,8 +94,8 @@ class LocalizationService(SpinningRosNode):
                 ofs = [tf_dict['tf_eef_to_template_origin']['x'], tf_dict['tf_eef_to_template_origin']['y'], tf_dict['tf_eef_to_template_origin']['z']]
                 position += np.array(ofs)
 
-            print(f"Template: {template_name}", flush=True)
-            res_names.append(template_name)
+            print(f"Template: {name_template}", flush=True)
+            res_names.append(name_template)
             print(position, flush=True)
             print(quaternion, flush=True)
             res_poses.append(PoseStamped(header=Header(), pose=Pose(position=Point(x=position[0], y=position[1], z=position[2]), orientation=Quaternion(x=quaternion[0], y=quaternion[1], z=quaternion[2], w=quaternion[3]))))
@@ -105,10 +105,10 @@ class LocalizationService(SpinningRosNode):
         return res
 
     def set_localizer(self, req, res):
-        template_name = req.template_name
+        name_template = req.template_name
 
         try:
-            with open(f"{object_localization.package_path}/cfg/{template_name}/params.yaml") as f:
+            with open(f"{object_localization.package_path}/cfg/{name_template}/params.yaml") as f:
                 tf_dict = yaml.safe_load(f)
         except FileNotFoundError:
             print("TEMPLATE DOES NOT EXIST!!!", flush=True)
@@ -131,9 +131,9 @@ class LocalizationService(SpinningRosNode):
             tf_dict['orientation']["y"], tf_dict['orientation']["z"], tf_dict['orientation']["w"]]
             , server=self.get_name())
         
-        template_path = f"{object_localization.package_path}/cfg/{template_name}/full_image.png"
+        template_path = f"{object_localization.package_path}/cfg/{name_template}/full_image.png"
         self._localizer = Localizer(template_path, cropping, depth)
-        print(f"localizer set to {template_name}", flush=True)
+        print(f"localizer set to {name_template}", flush=True)
         res.success = True
         return res
 

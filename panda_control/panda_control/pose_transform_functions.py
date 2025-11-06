@@ -1,12 +1,12 @@
 import numpy as np
-from quaternion import quaternion
+import quaternion
 import warnings
 warnings.filterwarnings("ignore", message=".*The 'nopython' keyword.*")
 from geometry_msgs.msg import PoseStamped, Pose
 import math
 
 def orientation_2_quaternion(orientation):
-    return quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
+    return quaternion.quaternion(orientation.w, orientation.x, orientation.y, orientation.z)
 
 def position_2_array(position):
     return np.array([position.x, position.y, position.z])
@@ -59,7 +59,7 @@ def transform_pos_ori(pos: np.array, ori, transform):
     return transformed_pos[:3], transformed_ori_array
 
 def list_2_quaternion(quaternion_list: list):
-    return quaternion(quaternion_list[0], quaternion_list[1], quaternion_list[2], quaternion_list[3])
+    return quaternion.quaternion(quaternion_list[0], quaternion_list[1], quaternion_list[2], quaternion_list[3])
 
 def transform_between_poses(pose2: PoseStamped, pose1: PoseStamped):
     pose1_matrix = pose_st_2_transformation(pose1)

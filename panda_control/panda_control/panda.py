@@ -1,7 +1,7 @@
 #%%
 #!/usr/bin/env python
 import time, math
-from quaternion import quaternion
+import quaternion
 import numpy as np
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import TransformBroadcaster
@@ -103,7 +103,7 @@ class Panda():
 
     def is_open(self, value: None | float = None):
         if value is None: # use real values
-            return self.grip_value > self.grip_open_width/2.0
+            return not self.gripper_state.is_grasped
         else:
             return float(value) > self.grip_open_width/2.0
 
@@ -141,14 +141,15 @@ class Panda():
         self.move_gripper(0.08)
 
     def grasp_gripper(self, width):
-        self.gripper.grasp(width=width, speed=0.05, force=10, epsilon_inner=0.055, epsilon_outer=0.055)
+        self.gripper.stop()
+        self.gripper.grasp(width=width, speed=0.05, force=50, epsilon_inner=0.055, epsilon_outer=0.055)
 
     def home(self, height=0.4, front_offset=0.4, side_offset=0.0):
         self.move_to_pose_with_stampedpose(self.curr_pose)
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
 
         pos_array = np.array([front_offset, side_offset, height])
-        quat = quaternion(0, 1, 0, 0)
+        quat = quaternion.quaternion(0, 1, 0, 0)
         goal = pos_quat_2_pose_st(pos_array, quat)
         goal.header.stamp = self.get_clock().now().to_msg()
 
@@ -218,7 +219,7 @@ class Panda():
         dist = np.sqrt(np.sum(np.subtract(position_start, goal_array)**2, axis=0))
         
         step_num_lin = math.floor(dist / interp_dist)
-        q_goal=quaternion(goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z)
+        q_goal=quaternion.quaternion(goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z)
         if goal_configuration is None:
             quaternion_array = np.array([goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z]) 
             # normalize quaternion
@@ -332,7 +333,7 @@ class Panda():
         i = 0
         while i < step_num:
             qw, qx, qy, qz = quat_seq[i]
-            pose_goal = pos_quat_2_pose_st(pos_seq[i], quaternion(qw, qx, qy, qz))
+            pose_goal = pos_quat_2_pose_st(pos_seq[i], quaternion.quaternion(qw, qx, qy, qz))
             self.move_to_pose_with_stampedpose(pose_goal)
 
             time.sleep(dt)
@@ -356,7 +357,7 @@ class Panda():
                     break
                 frac = min(gamma, max_step / max(ang_err, 1e-6))
                 q_next = q_slerp(q_curr, q_goal_wxyz, frac)
-                self.move_to_pose_with_stampedpose(pos_quat_2_pose_st(goal_xyz, quaternion(*q_next)))
+                self.move_to_pose_with_stampedpose(pos_quat_2_pose_st(goal_xyz, quaternion.quaternion(*q_next)))
                 time.sleep(0.006)
 
         if ori_dist > math.radians(0.3):  # skip if orientation change was tiny
@@ -526,6 +527,9 @@ class Panda():
 
             self.translational_stiffness_X, self.translational_stiffness_Y, self.translational_stiffness_Z, self.rotational_stiffness_X,self.rotational_stiffness_Y, self.rotational_stiffness_Z, self.nullspace_stiffness = stiffness
 
+    def broadcast_transform_thread(self):
+        while rclpy.ok():
+            time.sleep(UPDATE_THREAD_INTERVAL)
             self.broadcast_transform()
 
     def feedback_thread(self):
@@ -537,7 +541,7 @@ class Panda():
 
     def gripper_state_thread(self):
         while rclpy.ok():
-            time.sleep(1.0)
+            time.sleep(0.5)
             self.gripper_state = self.gripper.read_once()
 
     def start(self):
@@ -546,6 +550,8 @@ class Panda():
         if not DIRECT_STIFFNESS_OPTION:
             updateparam_thread = threading.Thread(target=self.update_params_thread, daemon=True)
             updateparam_thread.start()
+        broadcast_transform_thread = threading.Thread(target=self.broadcast_transform_thread, daemon=True)
+        broadcast_transform_thread.start()
         feedback_thread = threading.Thread(target=self.feedback_thread, daemon=True)
         feedback_thread.start()
         external_call_handler = threading.Thread(target=self.external_call_handler, daemon=True)

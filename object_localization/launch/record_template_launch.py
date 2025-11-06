@@ -11,7 +11,7 @@ def generate_launch_description():
 
     # Declare arguments
     template_name_arg = DeclareLaunchArgument(
-        'template_name', 
+        'name_template', 
         default_value='cube_template', 
         description='Template of the object to search during localization'
     )
@@ -36,7 +36,7 @@ def generate_launch_description():
         executable='record_template',
         name='record_template_node',
         output='screen',
-        parameters=[{'template_name': LaunchConfiguration('template_name')}]
+        parameters=[{'name_template': LaunchConfiguration('name_template')}]
     )
 
     # Return the launch description
