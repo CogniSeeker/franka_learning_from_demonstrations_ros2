@@ -72,11 +72,15 @@ app.layout = html.Div([
 def load_skill_data(skill_file):
     """Load skill data from .npz file"""
     data = np.load(os.path.join(TRAJECTORIES_DIR, skill_file))
+    if "tag" in data.keys():
+        tag = str(data['tag.npy'])
+    else:
+        tag = "no tag"
     return {
         'traj': data['traj.npy'],
         'grip': data['grip.npy'],
         'images': data['img.npy'],
-        'tag': data['tag.npy'],
+        'tag': tag,
     }
 
 def load_template(template_name):
@@ -271,10 +275,14 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
     # --- Load data (supports filename OR absolute path) ---
     if os.path.isabs(skill_file) or os.path.sep in skill_file:
         data_npz = np.load(skill_file)
+        if "tag" in data.keys():
+            tag = str(data['tag.npy'])
+        else:
+            tag = "no tag"
         data = {
             'traj': data_npz['traj.npy'],
             'images': data_npz['img.npy'],
-            'tag': data_npz['tag.npy'],
+            'tag': tag,
         }
         skill_label = os.path.basename(skill_file)
     else:
