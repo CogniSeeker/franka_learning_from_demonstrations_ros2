@@ -1,16 +1,18 @@
 import dash
-from dash import dcc, html, Input, Output, State
+from dash import dcc, html, Input, Output, State, no_update, clientside_callback
 import plotly.graph_objs as go
 import numpy as np
 import os
 from PIL import Image
 import base64
 import io
+import plotly.io as pio  # uses Kaleido for image export
 
 import socket, uuid, os, io, base64
 from IPython.display import display
 from IPython.display import Image as IPyImage
 
+TRAJECTORYPLOT_MARGINS = dict(l=90, r=90, b=90, t=70)
 
 # Configuration
 import trajectory_data, object_localization
@@ -48,7 +50,15 @@ app.layout = html.Div([
         dcc.Graph(
             id='gripper-plot',
             style={'width': '49%', 'display': 'inline-block'}
-        )
+        ),
+        html.Div([
+            html.Button(
+                "Download SVG (client-side)", id="btn-download-svg-client",
+                style={"padding":"8px 12px","borderRadius":"8px","border":"1px solid #ddd",
+                    "background":"#fafafa","cursor":"pointer","fontWeight":600}
+            ),
+            html.Div(id="noop", style={"display":"none"})
+        ], style={"margin":"12px 0"})
     ]),
     
     html.Div([
@@ -113,6 +123,35 @@ def numpy_to_base64(img_array):
     img.save(buffered, format="PNG")
     return f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()}"
 
+
+clientside_callback(
+    """
+    async function(n) {
+      if (!n) { return window.dash_clientside.no_update; }
+      const container = document.getElementById('3d-trajectory');
+      if (!container) { return null; }
+      const gd = container.getElementsByClassName('js-plotly-plot')[0];
+      if (!gd) { return null; }
+      try {
+        // Uses current camera/view exactly as seen on screen
+        const url = await Plotly.toImage(gd, {format:'svg', width:600, height:600});
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'trajectory_3d.svg';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (e) {
+        console.error('SVG export failed:', e);
+        alert('SVG export failed: ' + e);
+      }
+      return null;
+    }
+    """,
+    Output("noop", "children"),
+    Input("btn-download-svg-client", "n_clicks")
+)
+
 @app.callback(
     [Output('3d-trajectory', 'figure'),
      Output('gripper-plot', 'figure')],
@@ -156,7 +195,8 @@ def update_skill_visualization(skill_file):
             yaxis_title='Y',
             zaxis_title='Z'
         ),
-        margin=dict(l=0, r=0, b=0, t=40)
+        # more breathing room so axis titles stay inside the export
+        margin=TRAJECTORYPLOT_MARGINS,
     )
     
     # Gripper State Plot
@@ -238,10 +278,10 @@ def _fig_from_traj(traj):
     )
     fig.update_layout(
         title='End-Effector Trajectory',
-        scene=dict(aspectmode='data', xaxis_title='X',
-                   yaxis_title='Y', zaxis_title='Z'),
-        margin=dict(l=0, r=0, b=0, t=40)
+        scene=dict(aspectmode='data', xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+        margin=TRAJECTORYPLOT_MARGINS,
     )
+
     return fig
 
 def save_trajectory_png(skill_file, out_png="trajectory.png"):
