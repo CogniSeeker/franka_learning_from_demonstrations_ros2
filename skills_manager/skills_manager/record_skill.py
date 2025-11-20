@@ -14,7 +14,7 @@ def main():
         lfd.start()
         lfd.keyboard_start()
         lfd.frankabuttons_start()
-        # lfd.joy_start()
+        lfd.joy_start()
         # lfd.teleop_start()
 
         lfd.declare_parameter('name_skill', "no_skill_specified")
@@ -36,6 +36,8 @@ def main():
         lfd.save(name_skill)
     except KeyboardInterrupt:
         pass
+
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

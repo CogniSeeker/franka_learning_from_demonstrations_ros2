@@ -278,7 +278,6 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.player_step()
 
     def gripper_step(self, target_gripper: float):
-        
         if self.is_open(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
             print(f"griiper open: {self.is_open(target_gripper)} {self.is_open()}", flush=True)
             self.move_gripper(0.08)

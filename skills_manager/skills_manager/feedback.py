@@ -288,17 +288,19 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
             self.spiral_flag = 0
 
         if key == KeyCode.from_char('m'):    
-            quat_goal = list_2_quaternion(self.curr_ori_wxyz)
-            goal = pos_quat_2_pose_st(self.curr_pos, quat_goal)
+            if self._robot is not None:
+                quat_goal = list_2_quaternion(self._robot.curr_ori_wxyz)
+                goal = pos_quat_2_pose_st(self._robot.curr_pos, quat_goal)
 
-            self.move_to_pose_with_stampedpose(goal)
-            
-            self._robot.set_stiffness(0, 0, 0, 50, 50, 50, 0)
-            print("higher rotatioal stiffness")
+                self._robot.move_to_pose_with_stampedpose(goal)
+                
+                self._robot.set_stiffness(0, 0, 0, 50, 50, 50, 0)
+                print("higher rotatioal stiffness")
 
-        if key == KeyCode.from_char('n'):    
-            self._robot.set_stiffness(0, 0, 0, 0, 0, 0, 0)
-            print("zero rotatioal stiffness")
+        if key == KeyCode.from_char('n'):
+            if self._robot is not None:
+                self._robot.set_stiffness(0, 0, 0, 0, 0, 0, 0)
+                print("zero rotatioal stiffness")
         if key == Key.space:
             self.pause=not(self.pause)
             if self.pause==True:

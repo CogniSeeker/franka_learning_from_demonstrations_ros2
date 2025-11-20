@@ -23,6 +23,8 @@ from object_localization.tf_utils import CustomTransformListener
 
 CAMERA_COLOR_TOPIC = '/camera/color/image_raw'
 
+SCENE_PUBLISHING = False
+
 import threading
 import scene_msgs.msg as scene_ros
 
@@ -50,7 +52,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
 
         self.position_accuracy = 0.003
         self.orientation_accuracy=0.5 *(np.pi/180)
-        self.timeout_counter_max = 20
+        self.timeout_counter_max = 10
 
         self.goal_pose_pub = self.create_publisher(PoseStamped, "/panda/goal_pose", 5)
         self.create_subscription(PoseStamped, "/panda/curr_pose", self.curr_pose_callback, 5)
@@ -59,8 +61,9 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         self.img_last_rec = 0.0
 
         self.publishing_scene = True
-        spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
-        spinning_thread.start()
+        if SCENE_PUBLISHING:
+            spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
+            spinning_thread.start()
         self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
         
         self.curr_pos = None
