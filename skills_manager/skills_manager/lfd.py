@@ -11,6 +11,7 @@ from std_srvs.srv import Trigger
 from std_msgs.msg import Int32
 from panda_control import Panda, SpinningRosNode
 from skills_manager.feedback import Feedback
+from skills_manager.signalizer import Signalizator
 from skills_manager.insertion import Insertion
 from skills_manager.transfom import Transform 
 from panda_control.pose_transform_functions import position_2_array, pos_quat_2_pose_st, list_2_quaternion, invert_tf
@@ -53,6 +54,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         time.sleep(1)
 
+        self.signalizer = Signalizator()
+
     @property
     def loaded_trajectory_len(self):
         return 0 if self.loaded_traj is None else self.loaded_traj.shape[1]
@@ -76,6 +79,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         Args:
             roll_reduction_alpha: float. When controlled externally (joystick/gestures), we let roll->0 as the user cannot control it.
         """
+        self.signalizer.signalize_ready_demonstration()
+
         while self.end or self.pause:
             self.end = False
             self.pause = False
@@ -109,6 +114,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.init_additional_flags()
         self.recorded_img = self.pub_rec_image()
 
+        self.signalizer.signalize_demonstration()
         print("Recording started. Press e to stop.")
         while not self.end:
             while(self.pause):
@@ -181,6 +187,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
         self.get_logger().info("Ending trajectory recording")
+        self.signalizer.signalize_idle()
 
     def save(self, file='last'):
         if self.recorded_traj is None or self.recorded_ori_wxyz is None:
@@ -273,9 +280,11 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
     # player
     def execute(self):
+        self.signalizer.signalize_execution()
         self.player_init()
         while self.time_index <( self.loaded_trajectory_len):
             self.player_step()
+        self.signalizer.signalize_idle()
 
     def gripper_step(self, target_gripper: float):
         if self.is_open(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:

@@ -15,6 +15,8 @@ from panda_control.pose_transform_functions import pos_quat_2_pose_st, list_2_qu
 
 import rclpy
 from std_msgs.msg import Float32, String
+from std_msgs.srv import Trigger
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 
 import torch
 from playsound import playsound
@@ -52,6 +54,11 @@ class RALfD(RiskAwareFeedback, LfD):
         self.last_target_state = 0.0
 
         # self.haptic_buzz_pub = self.create_publisher(Float32, "/haptic_feedback", 5)
+
+        self.retrain_client = self.create_client(Trigger, 'active_localizer', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+
+    def retrain(self):
+        self.retrain_client.call(Trigger.Request())
 
     def target_state_callback(self, msg):
         self.last_target_state = time.time()
@@ -130,6 +137,7 @@ class RALfD(RiskAwareFeedback, LfD):
     def execute(self) -> Request:
         ''' Has trajectory at self.loaded_traj, self.loaded_ori
         '''
+        self.signalizer.signalize_execution()
         self.player_init()
         self.recorded_risk_flag = np.array([0])
         self.recorded_safe_flag = np.array([0])
@@ -177,6 +185,7 @@ class RALfD(RiskAwareFeedback, LfD):
         if self.time_index < self.loaded_traj.shape[1]: # not finished ending
             return Request(action="rec", timestep=self.time_index, task_name=f"{self.filename}_branch_at_{self.time_index}")
 
+        self.signalizer.signalize_idle()
         return Request(action="done", timestep=self.time_index, task_name=self.filename)
 
     def go_to_time_index(self, time_index: int, linear: bool = False):

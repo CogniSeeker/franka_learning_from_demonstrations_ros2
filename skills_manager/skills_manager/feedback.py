@@ -227,11 +227,11 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
     ## I must find better solution how to get the robot handle
     @property
     def _robot(self):
-        if self.__class__.__name__ == "LfD":
+        if self.__class__.__name__ == "LfD" or self.__class__.__name__ == "RALfD":
             return self
         elif hasattr(self, "LfD") and self.LfD is not None:
             return self.LfD
-        elif hasattr(self, "LfD") and self.LfD is not None:
+        elif hasattr(self, "LfD") and self.LfD is None:
             self.init_lfd()
             return self.LfD
         else:
