@@ -15,7 +15,8 @@ from panda_control.pose_transform_functions import pos_quat_2_pose_st, list_2_qu
 
 import rclpy
 from std_msgs.msg import Float32, String
-from std_msgs.srv import Trigger
+from std_srvs.srv import Trigger
+from lfd_msgs.srv import StringService
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 
 import torch
@@ -55,10 +56,10 @@ class RALfD(RiskAwareFeedback, LfD):
 
         # self.haptic_buzz_pub = self.create_publisher(Float32, "/haptic_feedback", 5)
 
-        self.retrain_client = self.create_client(Trigger, 'active_localizer', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
+        self.retrain_client = self.create_client(StringService, 'state_decider_retrain', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
 
-    def retrain(self):
-        self.retrain_client.call(Trigger.Request())
+    def retrain(self, task_name: str):
+        self.retrain_client.call(StringService.Request(text=str(task_name)))
 
     def target_state_callback(self, msg):
         self.last_target_state = time.time()
