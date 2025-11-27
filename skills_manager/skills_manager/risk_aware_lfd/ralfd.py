@@ -23,6 +23,8 @@ import torch
 from playsound import playsound
 from threading import Thread
 
+from nocode_robot_programming.state_decision.utils import Filename
+
 EXPECTED_TARGET_STATE_PUB_FREQ = 0.15 # sec
 
 @dataclass
@@ -158,7 +160,10 @@ class RALfD(RiskAwareFeedback, LfD):
                     self.r.sleep()
                     
                     if self.end or not rclpy.ok(): # user take control
-                        return Request(action="rec", timestep=self.time_index, task_name=f"{self.filename}_branch_at_{self.time_index}")
+                        offset = Filename(self.filename).offset
+                        task = Filename(self.filename).task
+                        save_name = f"{task}_branch_from_{offset}_at_{self.time_index}"
+                        return Request(action="rec", timestep=self.time_index, task_name=save_name)
                     
                     vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
                     if vel > 0.02:
@@ -170,21 +175,25 @@ class RALfD(RiskAwareFeedback, LfD):
                 self.recorded_novelty_flag = np.c_[self.recorded_novelty_flag, self.novelty_flag]
                 self.player_step()
                 
-                # anomaly, suggested_branch = self.target_state
-                anomaly = False
-                suggested_branch = self.filename
-                self.pause |= anomaly
-
-                # system switches branch
+                suggested_branch: str = self.target_state
                 curr_branch: str = self.filename
-                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {anomaly}")
+
+                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}")
+
+                if suggested_branch == "anomaly":
+                    self.pause = True
+                    continue
+
                 if suggested_branch != curr_branch:
                     return Request(action="play", timestep=self.time_index, task_name=suggested_branch)
             except rclpy.exceptions.ROSInterruptException:
                 print("manually interrupted", flush=True)
         
         if self.time_index < self.loaded_traj.shape[1]: # not finished ending
-            return Request(action="rec", timestep=self.time_index, task_name=f"{self.filename}_branch_at_{self.time_index}")
+            offset = Filename(self.filename).offset
+            task = Filename(self.filename).task
+            save_name = f"{task}_branch_from_{offset}_at_{self.time_index}"
+            return Request(action="rec", timestep=self.time_index, task_name=save_name)
 
         self.signalizer.signalize_idle()
         return Request(action="done", timestep=self.time_index, task_name=self.filename)
