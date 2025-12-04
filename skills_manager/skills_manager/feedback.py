@@ -16,9 +16,15 @@ import threading
 BUTTON_PRESS_MODE = "momentary"
 
 class KeyboardConnector():
+    def __init__(self):
+        super(KeyboardConnector, self).__init__()
+        self.key_thr_running = False
+    
     def keyboard_start(self):
-        self.key_thr = threading.Thread(target=self.keyboard_start_thread, daemon=True)
-        self.key_thr.start()
+        if not self.key_thr_running:
+            self.key_thr_running = True
+            self.key_thr = threading.Thread(target=self.keyboard_start_thread, daemon=True)
+            self.key_thr.start()
 
     def keyboard_start_thread(self):
         self.keyboard_listener = Listener(on_press=self.keyboard_on_press, on_release=self.keyboard_on_release)
@@ -26,8 +32,11 @@ class KeyboardConnector():
         self.keyboard_listener.join()  # keep the program alive (optional in REPL, essential in scripts)
 
     def keyboard_stop(self):
-        self.key_thr.join(timeout=1)
-        self.keyboard_listener.stop()
+        if self.key_thr_running:
+            self.key_thr.join(timeout=1)
+            self.keyboard_listener.stop()
+            self.key_thr_running = False
+    
 
 KEY_MAP = {
     'check': 'check',
@@ -59,14 +68,21 @@ class FrankaOnPress():
         self.cross_release_act = False
         self.check_release_act = False
 
+        self.frankabuttons_running = False
         
         # self.frankabuttons_start() # Franka buttons must be manually initialized now
 
     def frankabuttons_start(self):
-        self.desk.listen(self.franka_button_callback)
+        if not self.frankabuttons_running:
+            self.frankabuttons_running = True
+            self.desk.listen(self.franka_button_callback)
         '''
         {'check': False, 'circle': False, 'cross': False, 'down': False, 'left': False, 'right': False, 'up': False}
         '''
+
+    def frankabuttons_stop(self):
+        if self.frankabuttons_running:
+            print("We don't need to stop frankabuttons")
 
     def franka_button_callback(self, event_dict):
         for key in event_dict:

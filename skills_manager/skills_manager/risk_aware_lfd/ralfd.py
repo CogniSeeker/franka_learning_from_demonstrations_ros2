@@ -24,6 +24,8 @@ from playsound import playsound
 from threading import Thread
 
 from nocode_robot_programming.state_decision.utils import Filename
+from nocode_robot_programming.teaching.user_study_widget import choose_with_popup
+from skills_manager.jupyter_widget_panel import JupyterWidgetPanel
 
 EXPECTED_TARGET_STATE_PUB_FREQ = 0.15 # sec
 
@@ -39,7 +41,7 @@ class Request():
             raise ValueError(f"Invalid action: '{self.action}'. Valid actions are: {self.valid_actions}")
 
 
-class RALfD(RiskAwareFeedback, LfD):
+class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
     def __init__(self, estimator_risk_policy: str = 'ContinueRiskPolicy', risk_patience: int = 2):
         """
@@ -103,6 +105,10 @@ class RALfD(RiskAwareFeedback, LfD):
     #     ]
 
     def play_skill(self, name_skill, object_template_name, localize_box=True):
+        if not self.skill_exists(name_skill):
+            print("Skill doesn't exist! returning")
+            return
+
         if localize_box:
             if not self.set_localizer_client.wait_for_service(timeout_sec=5.0):
                 raise Exception("Service not available after waiting")
@@ -191,10 +197,25 @@ class RALfD(RiskAwareFeedback, LfD):
                 suggested_branch: str = self.target_state
                 curr_branch: str = self.filename
 
-                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}")
+                if suggested_branch.split("|")[0] == "manual_choose":
+                    options = suggested_branch.split("|")[1:]
+
+                    print("Waiting for user")
+                    
+                    suggested_branch = choose_with_popup(options, title="Select target skill part!")
+
+                if suggested_branch == "continue":
+                    suggested_branch = curr_branch
+
+                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}, {'SWITCHING!!!' if suggested_branch != curr_branch else ''}")
 
                 if suggested_branch == "anomaly":
                     self.pause = True
+                    continue
+
+                if suggested_branch == "":
+                    self.pause = True
+                    print("State decider returning empty string, pausing. Most probably, you forgot to train the model.")
                     continue
 
                 if suggested_branch != curr_branch:

@@ -98,6 +98,9 @@ class Panda():
 
         self.external_call_msg = None
 
+    def has_realtime_kernel(self):
+        return panda_py.libfranka.has_realtime_kernel()
+
     def is_grasped(self) -> bool:
         return self.gripper_state.is_grasped 
 
@@ -556,6 +559,7 @@ class Panda():
         feedback_thread.start()
         external_call_handler = threading.Thread(target=self.external_call_handler, daemon=True)
         external_call_handler.start()
+        self.gripper_state = self.gripper.read_once() # Initialize gripper state
         gripper_read_thread = threading.Thread(target=self.gripper_state_thread, daemon=True)
         gripper_read_thread.start()
 

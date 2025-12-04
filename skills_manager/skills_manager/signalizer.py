@@ -36,10 +36,10 @@ class Signalizator:
         self.root.update_idletasks()
 
     def signalize_demonstration(self):
-        self._set_state("DEMONSTRATION", self.COLOR_DEMONSTRATION)
+        self._set_state("DEMONSTRATING", self.COLOR_DEMONSTRATION)
 
     def signalize_ready_demonstration(self):
-        self._set_state("READY FOR DEMONSTRATION", self.COLOR_DEMONSTRATION_READY)
+        self._set_state("READY!", self.COLOR_DEMONSTRATION_READY)
 
     def signalize_execution(self):
         self._set_state("EXECUTION", self.COLOR_EXECUTION)
