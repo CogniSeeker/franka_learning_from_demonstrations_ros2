@@ -122,11 +122,24 @@ class RALfD(RiskAwareFeedback, LfD):
                     self.show(request.task_name)
                     self.load(request.task_name)
                     new_request = self.execute()
-                    self.save(request.task_name, risk_exec_trial=True)
+
+                    # Proposal FIX: correct label around DS
+                    # --------------------------
+                    # anomaly was triggered with new potential DS, 
+                    # we need to make sure here that DS window is saved with correct label
+                    if new_request.action in ["play", "rec"]:
+                        window_size = 10
+                        # 1.) Saving DS with an anomaly label
+                        self.save(request.task_name, is_exec_trial=True, split=slice(None, -window_size))
+                        # 2.) Saving the initial part with the original label
+                        self.save(new_request.task_name, is_exec_trial=True, split=slice(-window_size, None))
+    
+                    else:
+                        self.save(request.task_name, is_exec_trial=True)
                 
                 elif request.action == "rec":
                     self.traj_rec()
-                    self.save(request.task_name, risk_exec_trial=False)
+                    self.save(request.task_name, is_exec_trial=False)
                     new_request = Request(action="done")
 
                 else: raise Exception("action not valid")
@@ -221,42 +234,62 @@ class RALfD(RiskAwareFeedback, LfD):
             self.move_to_pose_with_stampedpose(goal)
             # self.goal_pub.publish(goal)
         
-    def save(self, file: str='last', risk_exec_trial: bool = False, tag: str = ""):
+    def save(self, file: str='last', is_exec_trial: bool = False, 
+            # additional
+            tag: str = "",
+            split: slice | None = None,  
+            ):
         """Saves Trajectory data to file
         If video_embedder and risk_estimator specified, then it is sampled and saved as video.
 
         Args:
             file (str | Iterable[str]): video file name to be saved.
-            risk_exec_trial (bool, optional): Loads trajectory data from execution. Defaults to False.
+            is_exec_trial (bool, optional): Loads trajectory data from execution. Defaults to False.
                 Initial trajectory is safe by default (np.ones)
                 If some risk_flags observed, then safe_flag is 0
         """        
         if (isinstance(file, Iterable) and not isinstance(file, str)):
             file = file[0]
         
-        if risk_exec_trial:
+        if is_exec_trial:
             n = number_of_saved(file, "trial") # trials 0, ..., n-1 exists
             added_file_suffix = f"_trial_{n}"
         else:
             added_file_suffix = ""
 
         pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
-        np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
-                traj=              self.recorded_traj,
-                ori=               self.recorded_ori_wxyz,
-                grip=              self.recorded_gripper,
-                img=               self.recorded_img, 
-                img_feedback_flag= self.recorded_img_feedback_flag,
-                spiral_flag=       self.recorded_spiral_flag,
-                risk_flag=         self.recorded_risk_flag,
-                safe_flag=         self.recorded_safe_flag,
-                novelty_flag=      self.recorded_novelty_flag,
+        if split is None:
+            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
+                    traj=              self.recorded_traj,
+                    ori=               self.recorded_ori_wxyz,
+                    grip=              self.recorded_gripper,
+                    img=               self.recorded_img, 
+                    img_feedback_flag= self.recorded_img_feedback_flag,
+                    spiral_flag=       self.recorded_spiral_flag,
+                    risk_flag=         self.recorded_risk_flag,
+                    safe_flag=         self.recorded_safe_flag,
+                    novelty_flag=      self.recorded_novelty_flag,
+                    tag = tag,
+                )
+        else:
+            assert isinstance(split, slice)
+            if len(self.recorded_img[split,:,:]) == 0:
+                print("short demonstration, saving only DS")
+                return
+            
+            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
+                traj=              self.recorded_traj[:, split],
+                ori=               self.recorded_ori_wxyz[:, split],
+                grip=              self.recorded_gripper[:, split],
+                img=               self.recorded_img[split,:,:], 
+                img_feedback_flag= self.recorded_img_feedback_flag[:, split],
+                spiral_flag=       self.recorded_spiral_flag[:, split],
+                risk_flag=         self.recorded_risk_flag[:, split],
+                safe_flag=         self.recorded_safe_flag[:, split],
+                novelty_flag=      self.recorded_novelty_flag[:, split],
                 tag = tag,
             )
-        
-        #if risk_exec_trial:
-        #     if self.sl.video_embedder is not None and self.sl.risk_estimator is not None and self.sl.feature_extractor is not None:
-        #         sample_and_save_on_video(f"{file}_trial_{n}", self.sl.video_embedder, self.sl.risk_estimator, self.sl.feature_extractor)
+
             
     def load(self, file='last'):
         data = np.load(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz")
