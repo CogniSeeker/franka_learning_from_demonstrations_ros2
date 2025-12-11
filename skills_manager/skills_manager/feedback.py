@@ -213,7 +213,7 @@ class FrankaConnector(FrankaOnPress):
 class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, TeleoperationByDrawing):
     def __init__(self):
         super(Feedback, self).__init__()
-        self.feedback = np.zeros(7) # demonstration/teleoperation feedback active gains
+        self.feedback = (0.0,0.0,0.0,0.0,0.0) # demonstration/teleoperation feedback active gains
         self.feedback_gripper = ""
         self.modality_in_control = ""
 
@@ -233,7 +233,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         try:
             while True:
                 time.sleep(0.2)
-                print(f"{self.feedback[0]:+.3f} {self.feedback[1]:+.3f} {self.feedback[2]:+.3f} {self.feedback[3]:+.3f} {self.feedback[4]:+.3f} {self.feedback[5]:+.3f} {self.feedback[6]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
+                print(f"{self.feedback[0]:+.3f} {self.feedback[1]:+.3f} {self.feedback[2]:+.3f} {self.feedback[3]:+.3f} {self.feedback[4]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
         except KeyboardInterrupt:
             return
 
@@ -257,7 +257,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         # self.get_logger().info(f"Event happened, user pressed {key}")
         # This function runs on the background and checks if a keyboard key was pressed
         if key == KeyCode.from_char('e'):
-            self.end = True
+            self.end += 1
         # Feedback for translate forward/backward
         if key == KeyCode.from_char('w'):
             self.correction_feedback[0] = self.feedback_gain
@@ -492,6 +492,7 @@ if __name__ == '__main__':
     class FeedbackRosNode(Feedback, SpinningRosNode):
         def __init__(self):
             super(FeedbackRosNode, self).__init__()
+            self.end = False
             self.gripper = DummyGripper(DummyGripperState(is_grasped=False))
             self.panda = DummyPanda()
 
@@ -511,5 +512,5 @@ if __name__ == '__main__':
     # raf = RiskAwareFeedback(button_press_mode="momentary")
     while True:
         time.sleep(0.1)
-        print(f.feedback, flush=True)
+        print(f.feedback, f.end, f.end > 2, flush=True)
 

@@ -330,6 +330,7 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
         skill_label = skill_file
 
     traj = data['traj']
+    if traj.ndim == 1: return
     images = data['images']
     grip = data['grip'].squeeze()
     tag = ""

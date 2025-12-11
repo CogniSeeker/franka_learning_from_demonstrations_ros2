@@ -21,6 +21,7 @@ from copy import deepcopy
 import spatialmath as sm
 import trajectory_data
 from trajectory_data.skill_visualizer import show_skill
+from nocode_robot_programming.state_decision.utils import Filename
 
 class SkillVis():
     def show(self, name_skill: str):
@@ -92,17 +93,14 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         init_feedback = deepcopy(self.feedback)
         print("Move robot to start recording.", flush=True)
         while vel < trigger:
+            if self.end:
+                break
             self.r.sleep()
-            set_stifness_once = sum(self.feedback - init_feedback) != 0  # feedback changed -> not kinesthetic teaching
+            set_stifness_once = sum(np.array(self.feedback) - np.array(init_feedback)) != 0  # feedback changed -> not kinesthetic teaching
             if set_stifness_once:
                 time.sleep(0.1)
-                print("Externally control, setting stiffness!", flush=True)
-                if self.modality_in_control == 'joystick':
-                    self.set_stiffness(1000, 1000, 1000, 80, 80, 80, 0)
-                elif self.modality_in_control == 'gestures':
-                    self.set_stiffness(500, 100, 100, 80, 80, 80, 0)
-                else:
-                    raise Exception("modality_in_control not defined")
+                print("External control, setting stiffness!", flush=True)
+                self.set_stiffness(1000, 1000, 1000, 400, 400, 400, 0)
                 break
             vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
 

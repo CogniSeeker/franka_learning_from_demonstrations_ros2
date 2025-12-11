@@ -36,16 +36,16 @@ class Signalizator:
         self.root.update_idletasks()
 
     def signalize_demonstration(self):
-        self._set_state("DEMONSTRATING", self.COLOR_DEMONSTRATION)
+        self._set_state("IS\nDEMONSTRATING", self.COLOR_DEMONSTRATION)
 
     def signalize_ready_demonstration(self):
-        self._set_state("READY!", self.COLOR_DEMONSTRATION_READY)
+        self._set_state("IS\nREADY!", self.COLOR_DEMONSTRATION_READY)
 
     def signalize_execution(self):
-        self._set_state("EXECUTION", self.COLOR_EXECUTION)
+        self._set_state("IS\nEXECUTING", self.COLOR_EXECUTION)
 
     def signalize_idle(self):
-        self._set_state("IDLE", self.COLOR_IDLE)
+        self._set_state("IS\nIDLE", self.COLOR_IDLE)
 
     def run(self):
         """Blocking call – starts the event loop."""

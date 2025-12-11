@@ -98,6 +98,8 @@ class Panda():
 
         self.external_call_msg = None
 
+        self.go_home_flag = False
+
     def has_realtime_kernel(self):
         return panda_py.libfranka.has_realtime_kernel()
 
@@ -148,6 +150,10 @@ class Panda():
         self.gripper.grasp(width=width, speed=0.05, force=50, epsilon_inner=0.055, epsilon_outer=0.055)
 
     def home(self, height=0.4, front_offset=0.4, side_offset=0.0):
+        # go to joint target joints of home position
+        self.restart_control(do_homing=True)
+        # redundant:
+        # go to position [0.4,0.0,0.4]
         self.move_to_pose_with_stampedpose(self.curr_pose)
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
 
@@ -156,8 +162,7 @@ class Panda():
         goal = pos_quat_2_pose_st(pos_array, quat)
         goal.header.stamp = self.get_clock().now().to_msg()
 
-        # ns_msg = [0, 0, 0, -2.4, 0, 2.4, 0.8] #ensure that the elbow is upward
-        self.go_to_pose_ik(goal)#, goal_configuration=ns_msg) # TODO: Works, but needs tuning
+        self.go_to_pose_ik(goal)
 
     def stop(self):
         self.goal_position = None
@@ -430,14 +435,24 @@ class Panda():
         self.tf_broadcaster.sendTransform(transform_stamped)
         # self.get_logger().info(f"Published transform from 'panda_link0' to 'panda_hand'")
 
-    def restart_control(self):
+    def restart_control(self, do_homing = False):
+        if do_homing:
+            self.go_home_flag = True
+            timeout = 10 # s (timeout with homeing)
+        else:
+            timeout = 2 # s (timeout just restart)
+
         self.break_control_done.clear()
         self.break_control_requested.set()
-        if not self.break_control_done.wait(timeout=2):
+        if not self.break_control_done.wait(timeout=timeout):
             raise Exception("Restart request not finished in time!")
 
     def ctrl_node(self, frequency=500):
         while True:
+            if self.go_home_flag:
+                # self.panda.move_to_start()
+                self.panda.move_to_joint_position(waypoints=[[0.0, -0.5, 0.0, -2.38, 0.0, 1.89, 0.8]])
+                self.go_home_flag = False
             ctrl = controllers.CartesianImpedance(filter_coeff=0.05, impedance=np.diag([self.translational_stiffness_X, self.translational_stiffness_Y, self.translational_stiffness_Z, self.rotational_stiffness_X, self.rotational_stiffness_Y, self.rotational_stiffness_Z]), nullspace_stiffness=self.nullspace_stiffness, damping_ratio=0.3)
             # print("New ctrl:", self.translational_stiffness_X, self.translational_stiffness_Y, self.translational_stiffness_Z, self.rotational_stiffness_X, self.rotational_stiffness_Y, self.rotational_stiffness_Z)
             self.panda.start_controller(ctrl)
@@ -537,10 +552,10 @@ class Panda():
 
     def feedback_thread(self):
         while rclpy.ok():
-            time.sleep(0.1)
             pos = self.curr_pos
             ori = self.curr_ori_xyzw
             self.curr_pose_pub.publish(PoseStamped(pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(x=ori[0], y=ori[1], z=ori[2], w=ori[3]))))
+            time.sleep(0.1)
 
     def gripper_state_thread(self):
         while rclpy.ok():

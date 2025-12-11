@@ -2,10 +2,8 @@
 from dataclasses import dataclass
 import pathlib, cv2, os, time, math
 import numpy as np
-from typing import Iterable, Tuple
+from typing import Iterable, Tuple, List
 from copy import deepcopy
-
-from video_embedding.utils import get_session, number_of_saved
 
 from skills_manager.lfd import LfD
 from skills_manager.risk_aware_lfd.risk_policy import *
@@ -23,7 +21,7 @@ import torch
 from playsound import playsound
 from threading import Thread
 
-from nocode_robot_programming.state_decision.utils import Filename
+from nocode_robot_programming.state_decision.utils import Filename, get_session
 from nocode_robot_programming.teaching.user_study_widget import choose_with_popup
 from skills_manager.jupyter_widget_panel import JupyterWidgetPanel
 
@@ -62,8 +60,55 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
         self.retrain_client = self.create_client(StringService, 'state_decider_retrain', qos_profile=QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT), callback_group=self.callback_group)
 
+        self.filename_obj: Filename | None = None
+
+    @property
+    def filename(self) -> str:
+        if self.filename_obj is not None:
+            return self.filename_obj.to_str()
+        else:
+            return ""
+
+    @filename.setter
+    def filename(self, value):
+        self.filename_obj = Filename(value)
+
+
     def retrain(self, task_name: str):
-        self.retrain_client.call(StringService.Request(text=str(task_name)))
+        # self.retrain_client.call(StringService.Request(text=str(task_name)))
+        self.end = False
+        future = self.retrain_client.call_async(StringService.Request(text=str(task_name)))
+
+        try:
+            # Manual spin loop so we can check our own conditions
+            while rclpy.ok() and not future.done() and not self.end:
+                time.sleep(0.1)
+
+            # If we’re here because our end flag is set:
+            if self.end:
+                self.get_logger().info('Service call aborted because end flag is True.')
+                # Optionally: future.cancel() – this only cancels waiting on the client side
+                return None
+
+            # If ROS is shutting down (Ctrl+C / shutdown):
+            if not rclpy.ok():
+                self.get_logger().info('Service call aborted because ROS is shutting down.')
+                return None
+
+            # Normal completion:
+            if future.cancelled():
+                self.get_logger().warn('Service call future was cancelled.')
+                return None
+
+            if future.exception() is not None:
+                raise future.exception()
+
+            return future.result()
+
+        except KeyboardInterrupt:
+            self.get_logger().info('KeyboardInterrupt: aborting service call.')
+            # Optionally: future.cancel()
+            return None
 
     def target_state_callback(self, msg):
         self.last_target_state = time.time()
@@ -104,10 +149,13 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
     #         torch.tensor(frame_number, dtype=torch.float32).cuda() # 5. Frame number normalized (0-1)
     #     ]
 
-    def play_skill(self, name_skill, object_template_name, localize_box=True):
+    def play_skill(self, name_skill, object_template_name, localize_box=True) -> List[Request]:
+        
+        self.request_log = []
+        
         if not self.skill_exists(name_skill):
             print("Skill doesn't exist! returning")
-            return
+            return []
 
         if localize_box:
             if not self.set_localizer_client.wait_for_service(timeout_sec=5.0):
@@ -115,15 +163,17 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             ret = self.set_localizer_client.call(SetTemplate.Request(template_name=object_template_name))
             if not ret.success:
                 print("Returned because localizer not succesful", flush=True)
-                return
+                return []
             self.move_template_start()
             self.active_localizer_client.call(Trigger.Request())
             self.compute_final_transform() 
 
+        saved_trial_exec_names = []
         try:
             request = Request(task_name = name_skill)
             while request.action != "done":
                 print(f"New request: {request}")
+                self.request_log.append(request)
                 if request.action == "play":
                     self.show(request.task_name)
                     self.load(request.task_name)
@@ -133,19 +183,31 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     # --------------------------
                     # anomaly was triggered with new potential DS, 
                     # we need to make sure here that DS window is saved with correct label
+                    time.sleep(1.0)
+                    ## TODO: I disabled double press to quit - there is some bug
+                    # if self.end < 2: # When user press end more than once, we don't save
                     if new_request.action in ["play", "rec"]:
                         window_size = 10
                         # 1.) Saving DS with an anomaly label
-                        self.save(request.task_name, is_exec_trial=True, split=slice(None, -window_size))
+                        save_name_ds = Filename(request.task_name, init_exec_trial=True)
+                        self.save(save_name_ds.to_str(), split=slice(None, -window_size))
                         # 2.) Saving the initial part with the original label
-                        self.save(new_request.task_name, is_exec_trial=True, split=slice(-window_size, None))
-    
+                        save_name_initpart = Filename(new_request.task_name, init_exec_trial=True)
+                        self.save(save_name_initpart.to_str(), split=slice(-window_size, None))
+
+                        saved_trial_exec_names.extend([save_name_ds.to_str(), save_name_initpart.to_str()])
                     else:
-                        self.save(request.task_name, is_exec_trial=True)
-                
+                        save_name = Filename(request.task_name, init_exec_trial=True)
+                        self.save(request.task_name)
+
+                        saved_trial_exec_names.append(save_name.to_str())
+                        
                 elif request.action == "rec":
                     self.traj_rec()
-                    self.save(request.task_name, is_exec_trial=False)
+                    success = self.save(request.task_name)
+                    if not success:
+                        for file in saved_trial_exec_names:
+                            self.remove(file)
                     new_request = Request(action="done")
 
                 else: raise Exception("action not valid")
@@ -154,7 +216,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
         except KeyboardInterrupt:
             print("Keyboard interrupted", flush=True)
-        return
+        return self.request_log
 
     def execute(self) -> Request:
         ''' Has trajectory at self.loaded_traj, self.loaded_ori
@@ -167,8 +229,9 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
         while (time.time() - self.last_target_state) > EXPECTED_TARGET_STATE_PUB_FREQ:
             print("waiting for target state", flush=True)
-            self.pub_rec_image()
             time.sleep(1.0)
+            self.pub_rec_image()
+        time.sleep(1.0)
 
         while self.time_index <( self.loaded_traj.shape[1]) and rclpy.ok() and not self.end:
             try:
@@ -179,9 +242,8 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     self.r.sleep()
                     
                     if self.end or not rclpy.ok(): # user take control
-                        offset = Filename(self.filename).offset
-                        task = Filename(self.filename).task
-                        save_name = f"{task}_branch_from_{offset}_at_{self.time_index}"
+                        save_name = Filename(self.filename_obj.task, offset=self.time_index, parent_offset=self.filename_obj.offset).to_str()
+
                         return Request(action="rec", timestep=self.time_index, task_name=save_name)
                     
                     vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
@@ -208,6 +270,19 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     suggested_branch = curr_branch
 
                 print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}, {'SWITCHING!!!' if suggested_branch != curr_branch else ''}")
+                ## TODO: Plotting current state interactively during execution
+                # fps = 1.0 / max(time.perf_counter() - t0, 1e-3)
+
+                # if hasattr(self,'ui_progress_callback'):
+                #     self.ui_progress_callback(
+                #         self, 
+                #         step=self.time_index,
+                #         fps=fps,
+                #         curr_branch=curr_branch,
+                #         target_state=self.target_state,
+                #         suggested_branch=suggested_branch,
+                #         anomaly_flag=(suggested_branch == "anomaly"),
+                #     )
 
                 if suggested_branch == "anomaly":
                     self.pause = True
@@ -220,13 +295,11 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
                 if suggested_branch != curr_branch:
                     return Request(action="play", timestep=self.time_index, task_name=suggested_branch)
-            except rclpy.exceptions.ROSInterruptException:
+            except rclpy.exceptions.ROSInterruptException or KeyboardInterrupt:
                 print("manually interrupted", flush=True)
         
         if self.time_index < self.loaded_traj.shape[1]: # not finished ending
-            offset = Filename(self.filename).offset
-            task = Filename(self.filename).task
-            save_name = f"{task}_branch_from_{offset}_at_{self.time_index}"
+            save_name = Filename(self.filename_obj.task, offset=self.time_index, parent_offset=self.filename_obj.offset).to_str()
             return Request(action="rec", timestep=self.time_index, task_name=save_name)
 
         self.signalizer.signalize_idle()
@@ -255,32 +328,33 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             self.move_to_pose_with_stampedpose(goal)
             # self.goal_pub.publish(goal)
         
-    def save(self, file: str='last', is_exec_trial: bool = False, 
-            # additional
-            tag: str = "",
-            split: slice | None = None,  
-            ):
+    def remove(self, file: str):
+        import os, pathlib
+        if not pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz").is_file():
+            print(f'file not exist {f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz"}')
+            return 
+        os.remove(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz")
+        print(f'to be removed {f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz"}')
+
+    def save(self, file: str='last', tag: str = "", split: slice | None = None):
         """Saves Trajectory data to file
         If video_embedder and risk_estimator specified, then it is sampled and saved as video.
 
         Args:
             file (str | Iterable[str]): video file name to be saved.
-            is_exec_trial (bool, optional): Loads trajectory data from execution. Defaults to False.
-                Initial trajectory is safe by default (np.ones)
-                If some risk_flags observed, then safe_flag is 0
         """        
         if (isinstance(file, Iterable) and not isinstance(file, str)):
             file = file[0]
-        
-        if is_exec_trial:
-            n = number_of_saved(file, "trial") # trials 0, ..., n-1 exists
-            added_file_suffix = f"_trial_{n}"
-        else:
-            added_file_suffix = ""
+
+        if len(self.recorded_img) < 3:
+            print("no demonstration to save, returning")
+            return False
+        print(f"len {len(self.recorded_img)}")
 
         pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
+
         if split is None:
-            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
+            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz",
                     traj=              self.recorded_traj,
                     ori=               self.recorded_ori_wxyz,
                     grip=              self.recorded_gripper,
@@ -296,9 +370,9 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             assert isinstance(split, slice)
             if len(self.recorded_img[split,:,:]) == 0:
                 print("short demonstration, saving only DS")
-                return
+                return False
             
-            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}{added_file_suffix}.npz",
+            np.savez(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz",
                 traj=              self.recorded_traj[:, split],
                 ori=               self.recorded_ori_wxyz[:, split],
                 grip=              self.recorded_gripper[:, split],
@@ -310,6 +384,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                 novelty_flag=      self.recorded_novelty_flag[:, split],
                 tag = tag,
             )
+        return True
 
             
     def load(self, file='last'):
@@ -343,7 +418,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
         if self.final_transform is not None:
             self.loaded_traj, self.loaded_ori_wxyz = self.transform_traj_ori(self.loaded_traj, self.loaded_ori_wxyz, self.final_transform)
         
-        self.filename=str(file) 
+        self.filename_obj=Filename(str(file))
 
     # def vibrate(self):
     #     self.haptic_buzz_pub.publish(Float32(data=0.5))
