@@ -198,7 +198,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                         saved_trial_exec_names.extend([save_name_ds.to_str(), save_name_initpart.to_str()])
                     else:
                         save_name = Filename(request.task_name, init_exec_trial=True)
-                        self.save(request.task_name)
+                        self.save(save_name.to_str())
 
                         saved_trial_exec_names.append(save_name.to_str())
                         
@@ -231,6 +231,8 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             print("waiting for target state", flush=True)
             time.sleep(1.0)
             self.pub_rec_image()
+            if self.end:
+                break
         time.sleep(1.0)
 
         while self.time_index <( self.loaded_traj.shape[1]) and rclpy.ok() and not self.end:

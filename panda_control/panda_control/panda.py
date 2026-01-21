@@ -106,12 +106,12 @@ class Panda():
     def is_grasped(self) -> bool:
         return self.gripper_state.is_grasped 
 
-    def is_open(self, value: None | float = None):
-        if value is None: # use real values
-            return not self.gripper_state.is_grasped
-        else:
-            return float(value) > self.grip_open_width/2.0
+    def IS_OPEN(self, value: float):
+        return float(value) > 0.04
 
+    def is_open(self):
+        return not self.gripper_state.is_grasped
+        
     def external_call_handler(self): 
         # if receives a target pose from topic, it goes there by linear motion
         while rclpy.ok():

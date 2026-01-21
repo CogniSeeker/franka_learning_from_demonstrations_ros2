@@ -90,14 +90,13 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         init_pos = self.curr_pos
         vel = 0 
-        init_feedback = deepcopy(self.feedback)
         print("Move robot to start recording.", flush=True)
         while vel < trigger:
             if self.end:
                 break
             self.r.sleep()
-            set_stifness_once = sum(np.array(self.feedback) - np.array(init_feedback)) != 0  # feedback changed -> not kinesthetic teaching
-            if set_stifness_once:
+
+            if self.is_applied_external_feedback(): # feedback changed and not kinesthetic teaching
                 time.sleep(0.1)
                 print("External control, setting stiffness!", flush=True)
                 self.set_stiffness(1000, 1000, 1000, 400, 400, 400, 0)
@@ -127,24 +126,42 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
             
-            # Joystick increments (radians): Z (yaw), Y (pitch)
-            dqz = sm.UnitQuaternion.Rz(self.feedback[3])
-            dqy = sm.UnitQuaternion.Ry(self.feedback[4])
-
             cx, cy, cz, cw = self.curr_ori_xyzw
             q_curr = sm.UnitQuaternion([cw, cx, cy, cz])  # [w,x,y,z]
             goal = PoseStamped()
-            goal.pose.position = Point(
-                x=self.curr_pos[0] + self.feedback[0],
-                y=self.curr_pos[1] + self.feedback[1],
-                z=self.curr_pos[2] + self.feedback[2],
-            )
+
+            trans_speed = 0.0
+            if self.gesture_feedback is not None:
+                goal.pose.position = Point(
+                    x=self.gesture_feedback[0],
+                    y=self.gesture_feedback[1],
+                    z=self.gesture_feedback[2],
+                )
+            elif self.joystick_feedback is not None:
+                goal.pose.position = Point(
+                    x=self.curr_pos[0] + self.joystick_feedback[0],
+                    y=self.curr_pos[1] + self.joystick_feedback[1],
+                    z=self.curr_pos[2] + self.joystick_feedback[2],
+                )
+                trans_speed = np.linalg.norm(self.joystick_feedback)
+
+            else:
+                goal.pose.position = Point(
+                    x=self.curr_pos[0],
+                    y=self.curr_pos[1],
+                    z=self.curr_pos[2],
+                )
+
+            # Joystick increments (radians): Z (yaw), Y (pitch)
+            dqz = sm.UnitQuaternion.Rz(self.rot_feedback[0])
+            dqy = sm.UnitQuaternion.Ry(self.rot_feedback[1])
+
             q_pre = q_curr * dqz * dqy
-            trans_speed = np.linalg.norm(self.feedback[0:3])
+
             alpha_when_moving = 0.02
             alpha = alpha_when_moving + (roll_redution_alpha - alpha_when_moving) * np.exp(-4.0*trans_speed)
-
             q_goal = Transform.step_toward_roll(q_pre, alpha=alpha)
+    
             qx, qy, qz, qw = q_goal.vec_xyzs  # returns (x,y,z,w)
             goal.pose.orientation = Quaternion(x=qx, y=qy, z=qz, w=qw)
 
@@ -285,10 +302,10 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.signalizer.signalize_idle()
 
     def gripper_step(self, target_gripper: float):
-        if self.is_open(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
-            print(f"griiper open: {self.is_open(target_gripper)} {self.is_open()}", flush=True)
+        if self.IS_OPEN(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
+            print(f"griiper open: {self.IS_OPEN(target_gripper)} {self.is_open()}", flush=True)
             self.move_gripper(0.08)
-        if not self.is_open(target_gripper) and self.is_open() and not self.gripper.read_once().is_grasped:
+        if not self.IS_OPEN(target_gripper) and self.is_open() and not self.gripper.read_once().is_grasped:
             print("griiper close", flush=True)
             if not self.is_grasped():
                 print("grasp started, wait for the grasp end")
@@ -300,7 +317,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         resized_img_gray=image_process(self.curr_image, self.ds_factor,  self.row_crop_pct_top , self.row_crop_pct_bot, self.col_crop_pct_left, self.col_crop_pct_right)
         
         resized_img_msg = self.bridge.cv2_to_imgmsg(resized_img_gray)
-        resized_img_msg.header.frame_id = str(self.time_index) # frame_id is set to timestep index
+        resized_img_msg.header.frame_id = f"{self.time_index}|{self.filename}" # frame_id is set to timestep index
         self.cropped_img_pub.publish(resized_img_msg)
 
         return resized_img_gray.reshape((1, resized_img_gray.shape[0], resized_img_gray.shape[1]))

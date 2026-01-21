@@ -213,9 +213,14 @@ class FrankaConnector(FrankaOnPress):
 class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, TeleoperationByDrawing):
     def __init__(self):
         super(Feedback, self).__init__()
-        self.feedback = (0.0,0.0,0.0,0.0,0.0) # demonstration/teleoperation feedback active gains
+
+        # Variables control the robot when demonstration recording
+        self.joystick_feedback = None # [0.0,0.0,0.0] # relative feedback active gains
+        self.gesture_feedback = None # [0.0,0.0,0.0] # absolute feedback toward base
+
+        self.rot_feedback = [0.0, 0.0]
+        
         self.feedback_gripper = ""
-        self.modality_in_control = ""
 
         self.correction_feedback=np.zeros(4)
         self.feedback_gain=0.002
@@ -229,11 +234,20 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
         self.spiral_feedback_correction=0
         self.pause=False
 
+    def is_applied_external_feedback(self):
+        if (self.joystick_feedback is not None) or (self.gesture_feedback is not None):
+            return True
+        else:
+            return False
+
     def input_check(self):
         try:
             while True:
                 time.sleep(0.2)
-                print(f"{self.feedback[0]:+.3f} {self.feedback[1]:+.3f} {self.feedback[2]:+.3f} {self.feedback[3]:+.3f} {self.feedback[4]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
+                if self.joystick_feedback is not None:
+                    print(f"{self.joystick_feedback[0]:+.3f} {self.joystick_feedback[1]:+.3f} {self.joystick_feedback[2]:+.3f} {self.rot_feedback[0]:+.3f} {self.rot_feedback[1]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
+                if self.gesture_feedback is not None:
+                    print(f"{self.gesture_feedback[0]:+.3f} {self.gesture_feedback[1]:+.3f} {self.gesture_feedback[2]:+.3f} {self.rot_feedback[0]:+.3f} {self.rot_feedback[1]:+.3f}. {str(self.feedback_gripper):.7s}, pause: {str(self.pause):.5s}", end="\r", flush=True)
         except KeyboardInterrupt:
             return
 
