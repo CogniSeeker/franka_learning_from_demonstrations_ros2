@@ -244,9 +244,13 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     self.r.sleep()
                     
                     if self.end or not rclpy.ok(): # user take control
-                        save_name = Filename(self.filename_obj.task, offset=self.time_index, parent_offset=self.filename_obj.offset).to_str()
+                        save_name = Filename(self.filename_obj.task, 
+                                             offset=self.time_index+self.filename_obj.offset,
+                                             parent_offset=self.filename_obj.offset
+                                            )
+                        save_name.find_unique()
 
-                        return Request(action="rec", timestep=self.time_index, task_name=save_name)
+                        return Request(action="rec", timestep=self.time_index, task_name=save_name.to_str())
                     
                     vel = math.sqrt((self.curr_pos[0]-init_pos[0])**2 + (self.curr_pos[1]-init_pos[1])**2 + (self.curr_pos[2]-init_pos[2])**2)
                     if vel > 0.02:
@@ -301,8 +305,12 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                 print("manually interrupted", flush=True)
         
         if self.time_index < self.loaded_traj.shape[1]: # not finished ending
-            save_name = Filename(self.filename_obj.task, offset=self.time_index, parent_offset=self.filename_obj.offset).to_str()
-            return Request(action="rec", timestep=self.time_index, task_name=save_name)
+            save_name = Filename(self.filename_obj.task, 
+                                 offset=self.time_index+self.filename_obj.offset, 
+                                 parent_offset=self.filename_obj.offset
+                                )
+            save_name.find_unique()
+            return Request(action="rec", timestep=self.time_index, task_name=save_name.to_str())
 
         self.signalizer.signalize_idle()
         return Request(action="done", timestep=self.time_index, task_name=self.filename)
