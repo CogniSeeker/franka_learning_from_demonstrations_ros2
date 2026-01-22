@@ -271,6 +271,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     print("Waiting for user")
                     
                     suggested_branch = choose_with_popup(options, title="Select target skill part!")
+                    assert isinstance(suggested_branch, str), f"suggested_branch should be string, it is: {type(suggested_branch)}"
 
                 if suggested_branch == "continue":
                     suggested_branch = curr_branch
@@ -359,7 +360,7 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
         if len(self.recorded_img) < 3:
             print("no demonstration to save, returning")
             return False
-        print(f"len {len(self.recorded_img)}")
+        print(f"Saving Trajectory with len: {len(self.recorded_img)}")
 
         pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}").mkdir(parents=True, exist_ok=True)
 

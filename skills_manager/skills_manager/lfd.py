@@ -204,10 +204,10 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.get_logger().info("Ending trajectory recording")
         self.signalizer.signalize_idle()
 
-    def save(self, file='last'):
+    def save(self, file: str = 'last') -> bool:
         if self.recorded_traj is None or self.recorded_ori_wxyz is None:
             print("Cannot save, recording is empty", flush=True)
-            return
+            return False
 
         if self.final_transform is not None:
             self.recorded_traj, self.recorded_ori_wxyz = self.transform_traj_ori(self.recorded_traj, self.recorded_ori_wxyz, invert_tf(self.final_transform))
@@ -219,7 +219,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
                  img=self.recorded_img, 
                  img_feedback_flag=self.recorded_img_feedback_flag,
                  spiral_flag=self.recorded_spiral_flag)
-    
+        return True
+
     def load(self, file='last'):
         data = np.load(trajectory_data.package_path + '/trajectories/' + str(file) + '.npz')
         self.loaded_traj = data['traj']
@@ -338,9 +339,11 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         start = pos_quat_2_pose_st(self.loaded_traj[:, 0], quat_start)
         self.go_to_pose_ik(start)
 
+        print("dbg 1/4")
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
-        
+        print("dbg 2/4")
         self.gripper_step(self.loaded_gripper[0][0])            
+        print("dbg 3/4")
         
         # init recording of new execution attempt
         self.recorded_traj = self.curr_pos
@@ -349,6 +352,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
         self.recorded_img = self.pub_rec_image()
+        print("dbg 4/4")
 
         return start
 
