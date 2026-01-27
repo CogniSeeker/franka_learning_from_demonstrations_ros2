@@ -143,7 +143,7 @@ class Panda():
         self.move(width, speed=0.05)
 
     def open(self):
-        self.move_gripper(0.08)
+        self.move_gripper(self.grip_open_width)
 
     def grasp_gripper(self, width):
         self.gripper.stop()

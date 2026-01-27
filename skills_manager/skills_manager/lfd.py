@@ -132,11 +132,15 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
             trans_speed = 0.0
             if self.gesture_feedback is not None:
+                if np.linalg.norm(np.array(self.gesture_feedback) - np.array(self.curr_pos)) > 0.2:
+                    print(f"too big step, safe quitting, would go to {self.gesture_feedback} from {self.curr_pos} in one step", )
+                    continue
                 goal.pose.position = Point(
                     x=self.gesture_feedback[0],
                     y=self.gesture_feedback[1],
                     z=self.gesture_feedback[2],
                 )
+
             elif self.joystick_feedback is not None:
                 goal.pose.position = Point(
                     x=self.curr_pos[0] + self.joystick_feedback[0],
@@ -176,7 +180,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
             if self.feedback_gripper == "open":
                 print("open gripper")
-                self.move_gripper(0.08)
+                self.move_gripper(self.grip_open_width)
                 time.sleep(0.1)
                 self.feedback_gripper = ""
 
@@ -305,7 +309,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
     def gripper_step(self, target_gripper: float):
         if self.IS_OPEN(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
             print(f"griiper open: {self.IS_OPEN(target_gripper)} {self.is_open()}", flush=True)
-            self.move_gripper(0.08)
+            self.move_gripper(self.grip_open_width)
         if not self.IS_OPEN(target_gripper) and self.is_open() and not self.gripper.read_once().is_grasped:
             print("griiper close", flush=True)
             if not self.is_grasped():

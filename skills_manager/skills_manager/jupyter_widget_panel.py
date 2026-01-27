@@ -146,7 +146,7 @@ class JupyterWidgetPanel():
             print(f"Grasped")
         else:
             print(f"is_grasped is True -> Opening")
-            self._robot.move_gripper(0.08)
+            self._robot.move_gripper(self._robot.grip_open_width)
             b.description = "Open"
             b.button_style = ""
             print(f"Opened")

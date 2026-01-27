@@ -296,7 +296,7 @@ class Feedback(FrankaConnector, KeyboardConnector, JoystickConnector, Teleoperat
 
         if key == KeyCode.from_char('o'):
             if self._robot is not None:
-                self._robot.move_gripper(0.08)
+                self._robot.move_gripper(self._robot.grip_open_width)
                 # self.gripper_feedback_correction = 1
         if key == KeyCode.from_char('f'):
             self.correction_feedback[3] = 1

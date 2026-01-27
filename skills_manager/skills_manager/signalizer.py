@@ -51,6 +51,11 @@ class Signalizator:
         """Blocking call – starts the event loop."""
         self.root.mainloop()
 
+    def close(self):
+        if self.root is not None and self.root.winfo_exists():
+            self.root.after(0, self.root.destroy)
+
+
 if __name__ == "__main__":
     s = Signalizator()
     s.run()
