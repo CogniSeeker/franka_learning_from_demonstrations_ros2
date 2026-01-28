@@ -107,7 +107,7 @@ class Panda():
         return self.gripper_state.is_grasped 
 
     def IS_OPEN(self, value: float):
-        return float(value) > 0.04
+        return float(value) > self.grip_open_width / 2.0
 
     def is_open(self):
         return not self.gripper_state.is_grasped
