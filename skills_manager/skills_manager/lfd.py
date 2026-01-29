@@ -308,14 +308,14 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
     def gripper_step(self, target_gripper: float):
         if self.IS_OPEN(target_gripper) and not self.is_open() and self.gripper.read_once().is_grasped:
-            print(f"griiper open: {self.IS_OPEN(target_gripper)} {self.is_open()}", flush=True)
+            # print(f"opening gripper: {self.IS_OPEN(target_gripper)} {self.is_open()}", flush=True)
             self.move_gripper(self.grip_open_width)
         if not self.IS_OPEN(target_gripper) and self.is_open() and not self.gripper.read_once().is_grasped:
-            print("griiper close", flush=True)
+            # print("closing gripper: ", flush=True)
             if not self.is_grasped():
-                print("grasp started, wait for the grasp end")
+                print("grasp started, wait for the grasp end... ", end="")
                 self.grasp_gripper(0.0)
-                print("grasp ended", flush=True)
+                print("grasp ended!", flush=True)
 
 
     def pub_rec_image(self):
@@ -343,11 +343,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         start = pos_quat_2_pose_st(self.loaded_traj[:, 0], quat_start)
         self.go_to_pose_ik(start)
 
-        print("dbg 1/4")
         self.set_stiffness(self.K_pos, self.K_pos, self.K_pos, self.K_ori, self.K_ori, self.K_ori, 0)
-        print("dbg 2/4")
         self.gripper_step(self.loaded_gripper[0][0])            
-        print("dbg 3/4")
         
         # init recording of new execution attempt
         self.recorded_traj = self.curr_pos
@@ -356,7 +353,6 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
         self.recorded_img = self.pub_rec_image()
-        print("dbg 4/4")
 
         return start
 

@@ -276,20 +276,18 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                 if suggested_branch == "continue":
                     suggested_branch = curr_branch
 
-                print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}, {'SWITCHING!!!' if suggested_branch != curr_branch else ''}")
+                # print(f"[step {self.time_index:3}]({int(round(1.0 / (time.perf_counter()-t0))):3}S/s) now: {curr_branch} -> suggested: {self.target_state}. anomaly: {suggested_branch == 'anomaly'}, {'SWITCHING!!!' if suggested_branch != curr_branch else ''}")
                 ## TODO: Plotting current state interactively during execution
-                # fps = 1.0 / max(time.perf_counter() - t0, 1e-3)
-
-                # if hasattr(self,'ui_progress_callback'):
-                #     self.ui_progress_callback(
-                #         self, 
-                #         step=self.time_index,
-                #         fps=fps,
-                #         curr_branch=curr_branch,
-                #         target_state=self.target_state,
-                #         suggested_branch=suggested_branch,
-                #         anomaly_flag=(suggested_branch == "anomaly"),
-                #     )
+                if hasattr(self,'ui_progress_callback'):
+                    self.ui_progress_callback(
+                        self, 
+                        step=self.time_index,
+                        fps=1.0 / max(time.perf_counter() - t0, 1e-3),
+                        curr_branch=curr_branch,
+                        target_state=self.target_state,
+                        suggested_branch=suggested_branch,
+                        anomaly_flag=(suggested_branch == "anomaly"),
+                    )
 
                 if suggested_branch == "anomaly":
                     self.pause = True

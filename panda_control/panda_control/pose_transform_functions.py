@@ -150,3 +150,40 @@ def q_slerp(q0, q1, t):
 def build_quat_seq(q0, q1, N):
     ts = np.linspace(0.0, 1.0, N)
     return np.stack([q_slerp(q0, q1, t) for t in ts], axis=0)
+
+
+def min_angle_condition(q1, q2):
+    '''
+    q1 : xyzw
+    q2 : xyzw
+    '''
+    # xyzw -> wxyz (used in quaternion)
+    q1_ = quaternion.quaternion(*[q1[3], q1[0], q1[1], q1[2]])
+    q2_ = quaternion.quaternion(*[q1[3], q1[0], q1[1], q1[2]]) 
+
+    q_rel = q2_ * q1_.conjugate()
+    if q_rel.w < 0:
+        q_rel = -q_rel
+
+    return 2.0 * np.arccos(np.clip(q_rel.w, -1.0, 1.0))
+
+def step_slerp(q1, q2, epsilon):
+    '''
+    q1 : xyzw
+    q2 : xyzw
+    returns q : xyzw
+    '''
+    # xyzw -> wxyz (used in quaternion)
+    q1_ = quaternion.quaternion(*[q1[3], q1[0], q1[1], q1[2]])
+    q2_ = quaternion.quaternion(*[q2[3], q2[0], q2[1], q2[2]]) 
+
+    q_rel = q2_ * q1_.conjugate()
+    if q_rel.w < 0:
+        q_rel = -q_rel
+
+    angle = 2.0 * np.arccos(np.clip(q_rel.w, -1.0, 1.0))
+
+    t = epsilon / angle
+    out_q = np.slerp_vectorized.slerp(q1_, q2_, t)
+    # wxyz -> xyzw (back)
+    return [out_q[1], out_q[2], out_q[3], out_q[0]]

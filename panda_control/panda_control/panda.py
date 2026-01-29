@@ -11,7 +11,7 @@ from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 # from franka_gripper.msg import GraspActionGoal, HomingActionGoal, StopActionGoal, MoveActionGoal
-from panda_control.pose_transform_functions import  pos_quat_2_pose_st, list_2_quaternion, pose_2_transformation, interpolate_poses, q_norm, q_angle, q_slerp, build_quat_seq
+from panda_control.pose_transform_functions import  pos_quat_2_pose_st, list_2_quaternion, pose_2_transformation, interpolate_poses, q_norm, q_angle, q_slerp, build_quat_seq, min_angle_condition, step_slerp 
 from spatialmath import SE3 #pip install spatialmath-python
 from spatialmath.base import q2r
 import roboticstoolbox as rtb #pip install roboticstoolbox-python
@@ -30,7 +30,9 @@ username = 'admin'
 password = '123456789'
 
 UPDATE_THREAD_INTERVAL = 1.0 # s
-OPEN_GRIPPER_WIDTH = 0.08 # How much gripper opens [m]
+OPEN_GRIPPER_WIDTH = 0.06 # How much gripper opens [m]
+HIGH_POINT_DIFFERENCE = 0.1 # m
+HIGH_ORI_DIFFERENCE = 0.01
 
 from typing import Iterable
 # panda-py is chatty, activate information log level
@@ -287,7 +289,7 @@ class Panda():
         self.set_stiffness(1000,1000,1000,80,80,80,0)
         # self.move_to_pose_with_stampedpose(self.curr_pose)
         # self.set_configuration(self.curr_joint)
-
+        
         robot = rtb.models.Panda()
 
         pos_start = np.array(self.curr_pos, dtype=float)
@@ -460,6 +462,26 @@ class Panda():
                 with self.panda.create_context(frequency=frequency, max_runtime=999) as ctx:
                     self.break_control_done.set()
                     while ctx.ok():
+                        if (np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos)) > HIGH_POINT_DIFFERENCE) or \
+                            min_angle_condition(self.goal_orientation, self.curr_ori_xyzw) > HIGH_ORI_DIFFERENCE:
+                            
+                            self.get_logger().warning(f"contror high set point difference {np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))}  {min_angle_condition(goal_orientation, self.curr_ori_xyzw, HIGH_ORI_DIFFERENCE)}")
+
+                            direction = (np.array(self.goal_position) - np.array(self.curr_pos)) / np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))
+                            new_goal_position = self.curr_pos + direction * HIGH_POINT_DIFFERENCE * 0.5
+                            
+                            new_goal_orientation = step_slerp(
+                                self.goal_orientation,
+                                self.curr_ori_xyzw, 
+                                HIGH_ORI_DIFFERENCE * 0.5,
+                            )
+
+                            self.get_logger().warning(f"{self.curr_pos}, {self.curr_ori_xyzw}, || , {new_goal_position}, {new_goal_orientation}")
+
+                            # ctrl.set_control(new_goal_position, new_goal_orientation)
+                            time.sleep(0.001) # Needed! Enforce consistent rate on non rt PC                        
+                            continue
+
                         if (self.goal_position is not None) and (self.goal_orientation is not None):
                             ctrl.set_control(self.goal_position, self.goal_orientation)
                         time.sleep(0.001) # Needed! Enforce consistent rate on non rt PC

@@ -7,18 +7,6 @@ def slerp_with_power(q1, q2, tau):
     q_slerp = quaternion_product(quaternion_power(quaternion_divide(q2, q1), tau), q1)
     return q_slerp
 
-def slerp(q1, q2, tau):
-    if inner(q1, q2) < 0:
-        q1 = change_sign(q1)
-    theta = np.arccos(np.abs(inner(q1, q2)))
-    q_slerp = np.zeros(4)
-
-    q_slerp.x = (np.sin((1 - tau) * theta) * q1.x + np.sin(tau * theta) * q2.x) / np.sin(theta)
-    q_slerp.y = (np.sin((1 - tau) * theta) * q1.y + np.sin(tau * theta) * q2.y) / np.sin(theta)
-    q_slerp.z = (np.sin((1 - tau) * theta) * q1.z + np.sin(tau * theta) * q2.z) / np.sin(theta)
-    q_slerp.w = (np.sin((1 - tau) * theta) * q1.w + np.sin(tau * theta) * q2.w) / np.sin(theta)
-    return q_slerp
-
 def slerp_sat(q1, q2, theta_max):
     if inner(q1, q2) < 0:
         q1 = change_sign(q1)
