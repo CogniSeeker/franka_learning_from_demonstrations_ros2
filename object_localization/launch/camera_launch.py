@@ -13,7 +13,7 @@ CAMERA_SERIAL_NO = '"105322250337"'
 def generate_launch_description():
     color_profile = DeclareLaunchArgument("rgb_camera.color_profile", default_value="848,480,30")
     color_profile = DeclareLaunchArgument("rgb_camera.color_profile", default_value="848,480,30")
-    log_level = DeclareLaunchArgument("log_level", default_value="info")
+    log_level = DeclareLaunchArgument("log_level", default_value="warn")
     serial_no = DeclareLaunchArgument("serial_no", default_value=CAMERA_SERIAL_NO)
     # set_lrs_log_level = SetEnvironmentVariable("LRS_LOG_LEVEL", "none")
 

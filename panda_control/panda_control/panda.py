@@ -462,25 +462,26 @@ class Panda():
                 with self.panda.create_context(frequency=frequency, max_runtime=999) as ctx:
                     self.break_control_done.set()
                     while ctx.ok():
-                        if (np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos)) > HIGH_POINT_DIFFERENCE) or \
-                            min_angle_condition(self.goal_orientation, self.curr_ori_xyzw) > HIGH_ORI_DIFFERENCE:
-                            
-                            self.get_logger().warning(f"contror high set point difference {np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))}  {min_angle_condition(goal_orientation, self.curr_ori_xyzw, HIGH_ORI_DIFFERENCE)}")
+                        if (self.goal_position is not None) and (self.goal_orientation is not None) and (self.curr_ori_xyzw is not None):
+                            if (np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos)) > HIGH_POINT_DIFFERENCE) or \
+                                min_angle_condition(self.goal_orientation, self.curr_ori_xyzw) > HIGH_ORI_DIFFERENCE:
+                                
+                                self.get_logger().warning(f"contror high set point difference {np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))}  {min_angle_condition(self.goal_orientation, self.curr_ori_xyzw) > HIGH_ORI_DIFFERENCE}")
 
-                            direction = (np.array(self.goal_position) - np.array(self.curr_pos)) / np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))
-                            new_goal_position = self.curr_pos + direction * HIGH_POINT_DIFFERENCE * 0.5
-                            
-                            new_goal_orientation = step_slerp(
-                                self.goal_orientation,
-                                self.curr_ori_xyzw, 
-                                HIGH_ORI_DIFFERENCE * 0.5,
-                            )
+                                # direction = (np.array(self.goal_position) - np.array(self.curr_pos)) / np.linalg.norm(np.array(self.goal_position) - np.array(self.curr_pos))
+                                # new_goal_position = self.curr_pos + direction * HIGH_POINT_DIFFERENCE * 0.5
+                                
+                                # new_goal_orientation = step_slerp(
+                                #     self.goal_orientation,
+                                #     self.curr_ori_xyzw, 
+                                #     HIGH_ORI_DIFFERENCE * 0.5,
+                                # )
 
-                            self.get_logger().warning(f"{self.curr_pos}, {self.curr_ori_xyzw}, || , {new_goal_position}, {new_goal_orientation}")
+                                # self.get_logger().warning(f"{self.curr_pos}, {self.curr_ori_xyzw}, || , {new_goal_position}, {new_goal_orientation}")
 
-                            # ctrl.set_control(new_goal_position, new_goal_orientation)
-                            time.sleep(0.001) # Needed! Enforce consistent rate on non rt PC                        
-                            continue
+                                # ctrl.set_control(new_goal_position, new_goal_orientation)
+                                time.sleep(0.001) # Needed! Enforce consistent rate on non rt PC                        
+                                continue
 
                         if (self.goal_position is not None) and (self.goal_orientation is not None):
                             ctrl.set_control(self.goal_position, self.goal_orientation)
@@ -491,8 +492,8 @@ class Panda():
                             # print("Restarting control")
                             self.panda.stop_controller()
                             break
-            except:
-                pass
+            except RuntimeError as e:
+                print(f"Recovering from libfranka exception: {str(e)}", flush=True)
 
     def move_to_pose(self, 
                      position: Iterable[float], # xyz

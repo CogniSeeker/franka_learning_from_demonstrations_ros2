@@ -184,6 +184,6 @@ def step_slerp(q1, q2, epsilon):
     angle = 2.0 * np.arccos(np.clip(q_rel.w, -1.0, 1.0))
 
     t = epsilon / angle
-    out_q = np.slerp_vectorized.slerp(q1_, q2_, t)
+    out_q = np.slerp_vectorized(q1_, q2_, t)
     # wxyz -> xyzw (back)
     return [out_q[1], out_q[2], out_q[3], out_q[0]]
