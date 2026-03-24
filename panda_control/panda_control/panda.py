@@ -45,8 +45,8 @@ DIRECT_STIFFNESS_OPTION = True
 
 class Panda():
     def __init__(self,
-                 K_pos: int = 1000, # Default Positional stiffness
-                 K_ori: int = 80, # Default Orientation stiffness
+                 K_pos: int = 300, # Default Positional stiffness
+                 K_ori: int = 30, # Default Orientation stiffness
                  K_ns: int = 0, # Default Nullspace stiffness
                  ):
         super(Panda, self).__init__()

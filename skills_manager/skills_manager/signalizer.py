@@ -8,7 +8,7 @@ class Signalizator:
     COLOR_DEMONSTRATION_READY = "#bb9b1d" # yellow
     COLOR_EXECUTION = "#2ecc71"     # green
 
-    def __init__(self, fullscreen=True, monitor_offset_x=2440, size="400x200"):
+    def __init__(self, fullscreen=True, monitor_offset_x=0, size="400x200"):
         self.root = tk.Tk()
         self.root.title("Robot status")
 
@@ -16,10 +16,10 @@ class Signalizator:
             # fill one monitor, shifted by monitor_offset_x pixels (e.g. 1920)
             w = self.root.winfo_screenwidth()
             h = self.root.winfo_screenheight()
-            self.root.geometry(f"{w}x{h}+{monitor_offset_x}+0")
+            self.root.geometry(f"800x600-3500+0")
         else:
             # normal, resizable window
-            self.root.geometry(f"{size}+{monitor_offset_x}+0")
+            self.root.geometry(f"400x200-1920+0")
             self.root.resizable(True, True)
 
         self.label = tk.Label(self.root, font=("DejaVu Sans", 150, "bold"))

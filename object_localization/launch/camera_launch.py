@@ -8,7 +8,8 @@ from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration
 
-CAMERA_SERIAL_NO = '"105322250337"'
+# CAMERA_SERIAL_NO = '"105322250337"'
+CAMERA_SERIAL_NO = '"318122300789"'
 
 def generate_launch_description():
     color_profile = DeclareLaunchArgument("rgb_camera.color_profile", default_value="848,480,30")
