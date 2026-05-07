@@ -21,6 +21,9 @@ TRAJECTORIES_DIR = f"{trajectory_data.package_path}/trajectories"
 CFG_DIR = f"/home/imitlearn/petr_sandbox/saw_ws/src/ILeSiA/franka_risk_aware_learning_from_demonstrations/object_localization/cfg"
 CFG_DIR = f"{object_localization.package_path}/cfg"
 
+from pathlib import Path
+Path(CFG_DIR).mkdir(parents=True, exist_ok=True)
+
 app = dash.Dash(__name__)
 
 app.layout = html.Div([
