@@ -43,9 +43,22 @@ from copy import deepcopy
 ### SUPER FAST STIFFNESS SETTING - NO ROS PARAM SET (cannot be changed it remotely)
 DIRECT_STIFFNESS_OPTION = True
 
+### End-effector payload (Panda Hand ~0.7 kg + RealSense D455 ~0.3 kg).
+### libfranka splits the flange payload into m_ee (the end effector the
+### system already knows about, e.g. the Franka Hand configured in Desk) and
+### m_load (set via set_load). Gravity is compensated against
+### m_total = m_ee + m_load. So set_load must declare ONLY the mass beyond the
+### hand (the camera + mount) -- declaring the full total double-counts the
+### hand and over-compensates gravity (arm rises at zero stiffness).
+TOTAL_PAYLOAD_MASS = 1.05  # kg, full flange payload (hand + camera + mount)
+LOAD_F_X_CLOAD = [-0.01, 0.0, 0.03]  # m, flange->load COM in the flange frame
+LOAD_INERTIA = [0.001, 0.0, 0.0,
+                0.0, 0.0025, 0.0,
+                0.0, 0.0, 0.0017]  # kg*m^2, row-major 3x3
+
 class Panda():
     def __init__(self,
-                 K_pos: int = 300, # Default Positional stiffness
+                 K_pos: int = 1000, # Default Positional stiffness
                  K_ori: int = 30, # Default Orientation stiffness
                  K_ns: int = 0, # Default Nullspace stiffness
                  ):
@@ -83,6 +96,18 @@ class Panda():
 
         self.panda = panda_py.Panda(HOSTNAME)
         self.panda.disable_logging()
+
+        # Configure the end-effector load so the Cartesian impedance controller
+        # compensates the payload's gravity. Must be done while idle (no motion
+        # running yet), which is the case here in __init__ before ctrl_node starts.
+        # The system already accounts for the configured end effector (m_ee, e.g.
+        # the Franka Hand), so declare only the remaining mass to avoid
+        # double-counting it (which over-compensates and lifts the arm).
+        m_ee = self.panda.get_state().m_ee
+        load_mass = max(TOTAL_PAYLOAD_MASS - m_ee, 0.0)
+        # self.panda.get_robot().set_load(load_mass, LOAD_F_X_CLOAD, LOAD_INERTIA)
+        # print(f"[panda] set_load: m_ee={m_ee:.3f} kg, m_load={load_mass:.3f} kg, "
+        #   f"target m_total={TOTAL_PAYLOAD_MASS:.3f} kg", flush=True)
 
         self.gripper = Gripper(HOSTNAME)
         self.goal_position = None # Set (x,y,z) attractor

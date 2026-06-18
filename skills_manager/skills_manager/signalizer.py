@@ -16,7 +16,7 @@ class Signalizator:
             # fill one monitor, shifted by monitor_offset_x pixels (e.g. 1920)
             w = self.root.winfo_screenwidth()
             h = self.root.winfo_screenheight()
-            self.root.geometry(f"800x600-3500+0")
+            self.root.geometry(f"1280x640-4000+0")
         else:
             # normal, resizable window
             self.root.geometry(f"400x200-1920+0")

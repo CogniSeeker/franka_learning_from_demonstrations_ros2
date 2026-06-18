@@ -24,6 +24,7 @@ from threading import Thread
 from nocode_robot_programming.state_decision.utils import Filename, get_session
 from nocode_robot_programming.teaching.user_study_widget import choose_with_popup
 from skills_manager.jupyter_widget_panel import JupyterWidgetPanel
+from lfd_msgs.srv import SetTemplate
 
 EXPECTED_TARGET_STATE_PUB_FREQ = 0.15 # sec
 
@@ -41,17 +42,22 @@ class Request():
 
 class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
 
-    def __init__(self, estimator_risk_policy: str = 'ContinueRiskPolicy', risk_patience: int = 2):
+    def __init__(self, estimator_risk_policy: str = 'ContinueRiskPolicy', risk_patience: int = 2,
+                 save_ds_window: bool = False):
         """
         Args:
             estimator_risk_policy (str): What to do when Risk Estimator detects risk
             human_risk_policy (str): What to do when Human signalizes risk
             risk_patience (int): How many risky samples next to each other to trigger risk. Defaulting to 2.
-        """        
+            save_ds_window (bool): When True, also save the short uncertain decision-state window
+                (the last `window_size` samples before the branch) under the new label. Defaults to
+                False, i.e. those samples are discarded rather than saved as a separate segment.
+        """
         super(RALfD, self).__init__()
         self.create_subscription(String, "/target_state", self.target_state_callback, 5)
 
         self.risk_policy = eval(estimator_risk_policy)(risk_patience)
+        self.save_ds_window = save_ds_window
 
         self.target_state = ""
         self.last_target_state = 0.0
@@ -188,14 +194,26 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
                     # if self.end < 2: # When user press end more than once, we don't save
                     if new_request.action in ["play", "rec"]:
                         window_size = 10
-                        # 1.) Saving DS with an anomaly label
+                        # 1.) Save the clean execution-so-far under the ORIGINAL label,
+                        #     excluding the uncertain decision-state window (last window_size samples).
                         save_name_ds = Filename(request.task_name, init_exec_trial=True)
                         self.save(save_name_ds.to_str(), split=slice(None, -window_size))
-                        # 2.) Saving the initial part with the original label
-                        save_name_initpart = Filename(new_request.task_name, init_exec_trial=True)
-                        self.save(save_name_initpart.to_str(), split=slice(-window_size, None))
+                        saved_trial_exec_names.append(save_name_ds.to_str())
 
-                        saved_trial_exec_names.extend([save_name_ds.to_str(), save_name_initpart.to_str()])
+                        # 2.) Optionally save the uncertain DS window under the NEW label.
+                        #     It holds the last window_size samples before the branch, so it must be
+                        #     positioned just before the decision state at [DS-window_size, DS-1].
+                        #     The new label's offset is DS, so use offset = DS - window_size.
+                        if self.save_ds_window:
+                            nr = Filename(new_request.task_name)
+                            save_name_initpart = Filename(
+                                nr.task,
+                                offset=nr.offset - window_size,
+                                parent_offset=nr.parent_offset,
+                                init_exec_trial=True,
+                            )
+                            self.save(save_name_initpart.to_str(), split=slice(-window_size, None))
+                            saved_trial_exec_names.append(save_name_initpart.to_str())
                     else:
                         save_name = Filename(request.task_name, init_exec_trial=True)
                         self.save(save_name.to_str())
