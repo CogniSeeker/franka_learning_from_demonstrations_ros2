@@ -12,13 +12,9 @@ from launch.substitutions import LaunchConfiguration
 CAMERA_SERIAL_NO = '"318122300789"'
 
 def generate_launch_description():
-    color_profile = DeclareLaunchArgument("rgb_camera.color_profile", default_value="848,480,30")
-    color_profile = DeclareLaunchArgument("rgb_camera.color_profile", default_value="848,480,30")
     log_level = DeclareLaunchArgument("log_level", default_value="warn")
     serial_no = DeclareLaunchArgument("serial_no", default_value=CAMERA_SERIAL_NO)
-    # set_lrs_log_level = SetEnvironmentVariable("LRS_LOG_LEVEL", "none")
 
-    # Include the Realsense camera launch file with resolution parameters
     realsense_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
@@ -28,7 +24,7 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
-            "rgb_camera.color_profile": "848,480,30",
+            "rgb_camera.profile": "848,480,30",
             "log_level": "info",
             "initial_reset": "true",
             "serial_no": LaunchConfiguration("serial_no"),
@@ -44,7 +40,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        color_profile,
         log_level,
         serial_no,
         # set_lrs_log_level,

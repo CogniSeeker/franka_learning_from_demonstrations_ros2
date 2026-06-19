@@ -55,6 +55,7 @@ LOAD_F_X_CLOAD = [-0.01, 0.0, 0.03]  # m, flange->load COM in the flange frame
 LOAD_INERTIA = [0.001, 0.0, 0.0,
                 0.0, 0.0025, 0.0,
                 0.0, 0.0, 0.0017]  # kg*m^2, row-major 3x3
+LOAD_MASS = False
 
 class Panda():
     def __init__(self,
@@ -103,11 +104,12 @@ class Panda():
         # The system already accounts for the configured end effector (m_ee, e.g.
         # the Franka Hand), so declare only the remaining mass to avoid
         # double-counting it (which over-compensates and lifts the arm).
-        m_ee = self.panda.get_state().m_ee
-        load_mass = max(TOTAL_PAYLOAD_MASS - m_ee, 0.0)
-        # self.panda.get_robot().set_load(load_mass, LOAD_F_X_CLOAD, LOAD_INERTIA)
-        # print(f"[panda] set_load: m_ee={m_ee:.3f} kg, m_load={load_mass:.3f} kg, "
-        #   f"target m_total={TOTAL_PAYLOAD_MASS:.3f} kg", flush=True)
+        if LOAD_MASS:
+            m_ee = self.panda.get_state().m_ee
+            load_mass = max(TOTAL_PAYLOAD_MASS - m_ee, 0.0)
+            self.panda.get_robot().set_load(load_mass, LOAD_F_X_CLOAD, LOAD_INERTIA)
+            print(f"[panda] set_load: m_ee={m_ee:.3f} kg, m_load={load_mass:.3f} kg, "
+              f"target m_total={TOTAL_PAYLOAD_MASS:.3f} kg", flush=True)
 
         self.gripper = Gripper(HOSTNAME)
         self.goal_position = None # Set (x,y,z) attractor

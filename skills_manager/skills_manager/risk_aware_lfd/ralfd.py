@@ -83,6 +83,24 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
     def retrain(self, task_name: str):
         # self.retrain_client.call(StringService.Request(text=str(task_name)))
         self.end = False
+
+        # call_async() on a service that hasn't been discovered yet returns a future
+        # that never completes, and it does NOT reconnect when the server appears
+        # later. So wait for the switcher first, looping so we recover once the user
+        # starts it. Respect self.end / shutdown so we can still be aborted.
+        warned = False
+        while rclpy.ok() and not self.end and \
+                not self.retrain_client.wait_for_service(timeout_sec=1.0):
+            if not warned:
+                print("switcher not available",flush=True)
+                print("Run switcher: ros2 run nocode_robot_programming switcher",flush=True)
+                warned = True
+
+        if self.end or not rclpy.ok():
+            return None
+        if warned:
+            print("[training] Switcher detected, continuing.", flush=True)
+
         future = self.retrain_client.call_async(StringService.Request(text=str(task_name)))
 
         try:
