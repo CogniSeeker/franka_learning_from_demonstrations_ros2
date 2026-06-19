@@ -192,7 +192,8 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             self.active_localizer_client.call(Trigger.Request())
             self.compute_final_transform() 
 
-        saved_trial_exec_names = []
+        # Track trials saved by this run so the last play can be undone
+        self.last_saved_trial_names = saved_trial_exec_names = []
         try:
             request = Request(task_name = name_skill)
             while request.action != "done":
@@ -373,6 +374,22 @@ class RALfD(JupyterWidgetPanel, RiskAwareFeedback, LfD):
             self.move_to_pose_with_stampedpose(goal)
             # self.goal_pub.publish(goal)
         
+    def delete_last_play(self) -> List[str]:
+        """Delete the trial file(s) saved by the most recent play_skill run.
+
+        Use when a finished play was saved but is invalid and must be discarded.
+        Returns the list of trial names that were removed.
+        """
+        names = list(getattr(self, "last_saved_trial_names", []))
+        if not names:
+            print("[delete_last_play] no saved trial from the last play to delete.", flush=True)
+            return []
+        for file in names:
+            self.remove(file)
+        self.last_saved_trial_names = []
+        print(f"[delete_last_play] removed {len(names)} trial file(s): {names}", flush=True)
+        return names
+
     def remove(self, file: str):
         import os, pathlib
         if not pathlib.Path(f"{trajectory_data.package_path}/trajectories/{get_session()}/{file}.npz").is_file():
