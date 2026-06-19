@@ -256,7 +256,20 @@ class Panda():
         dist = np.sqrt(np.sum(np.subtract(position_start, goal_array)**2, axis=0))
         
         step_num_lin = math.floor(dist / interp_dist)
-        q_goal=quaternion.quaternion(goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z)
+
+        # Orientation slerp endpoints. The quick variant used to command the goal
+        # orientation on every step (an instant orientation jump that triggers
+        # reflex errors on large rotations); interpolate the orientation instead.
+        q_start_wxyz = q_norm([self.curr_pose.pose.orientation.w,
+                               self.curr_pose.pose.orientation.x,
+                               self.curr_pose.pose.orientation.y,
+                               self.curr_pose.pose.orientation.z])
+        q_goal_wxyz = q_norm([goal_pose.pose.orientation.w,
+                              goal_pose.pose.orientation.x,
+                              goal_pose.pose.orientation.y,
+                              goal_pose.pose.orientation.z])
+        max_ori_step = math.radians(10.0)  # cap orientation change per step (~10 deg)
+        step_num_ori = max(1, math.ceil(q_angle(q_start_wxyz, q_goal_wxyz) / max_ori_step))
         if goal_configuration is None:
             quaternion_array = np.array([goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z]) 
             # normalize quaternion
@@ -289,21 +302,25 @@ class Panda():
             max_joint_distance = np.max(joint_distance)
             step_num_joint = math.ceil(max_joint_distance / interp_dist_joint)
             # step_num_joint = int(np.ceil(np.linalg.norm(goal_configuration - joint_start) / interp_dist_joint))
-            step_num=np.max([step_num_joint,step_num_lin])+1
-        
+            step_num=np.max([step_num_joint,step_num_lin,step_num_ori])+1
+
             pos_goal = np.vstack([np.linspace(start, end, step_num) for start, end in zip(position_start, [goal_pose.pose.position.x, goal_pose.pose.position.y, goal_pose.pose.position.z])]).T
             joint_goal = np.vstack([np.linspace(start, end, step_num) for start, end in zip(joint_start, goal_configuration)]).T
+            quat_goal = build_quat_seq(q_start_wxyz, q_goal_wxyz, step_num)
 
             
             i=0
             while i < step_num:
-                pose_goal = pos_quat_2_pose_st(pos_goal[i], q_goal) 
+                qw, qx, qy, qz = quat_goal[i]
+                pose_goal = pos_quat_2_pose_st(pos_goal[i], quaternion.quaternion(qw, qx, qy, qz))
                 self.move_to_pose_with_stampedpose(pose_goal)
                 self.set_configuration(joint_goal[i])
                 if self.safety_check:
-                    i= i+1 
+                    i= i+1
 
                 # r.sleep()
+                # Per-step dwell paces the whole motion: larger = slower & gentler,
+                # which avoids reflex errors on bigger pose changes.
                 time.sleep(0.01)
             
         else:
