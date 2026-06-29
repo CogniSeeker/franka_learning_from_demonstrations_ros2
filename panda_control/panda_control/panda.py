@@ -43,10 +43,24 @@ from copy import deepcopy
 ### SUPER FAST STIFFNESS SETTING - NO ROS PARAM SET (cannot be changed it remotely)
 DIRECT_STIFFNESS_OPTION = True
 
+### End-effector payload (Panda Hand ~0.7 kg + RealSense D455 ~0.3 kg).
+### libfranka splits the flange payload into m_ee (the end effector the
+### system already knows about, e.g. the Franka Hand configured in Desk) and
+### m_load (set via set_load). Gravity is compensated against
+### m_total = m_ee + m_load. So set_load must declare ONLY the mass beyond the
+### hand (the camera + mount) -- declaring the full total double-counts the
+### hand and over-compensates gravity (arm rises at zero stiffness).
+TOTAL_PAYLOAD_MASS = 1.05  # kg, full flange payload (hand + camera + mount)
+LOAD_F_X_CLOAD = [-0.01, 0.0, 0.03]  # m, flange->load COM in the flange frame
+LOAD_INERTIA = [0.001, 0.0, 0.0,
+                0.0, 0.0025, 0.0,
+                0.0, 0.0, 0.0017]  # kg*m^2, row-major 3x3
+LOAD_MASS = False
+
 class Panda():
     def __init__(self,
                  K_pos: int = 1000, # Default Positional stiffness
-                 K_ori: int = 80, # Default Orientation stiffness
+                 K_ori: int = 30, # Default Orientation stiffness
                  K_ns: int = 0, # Default Nullspace stiffness
                  ):
         super(Panda, self).__init__()
@@ -83,6 +97,19 @@ class Panda():
 
         self.panda = panda_py.Panda(HOSTNAME)
         self.panda.disable_logging()
+
+        # Configure the end-effector load so the Cartesian impedance controller
+        # compensates the payload's gravity. Must be done while idle (no motion
+        # running yet), which is the case here in __init__ before ctrl_node starts.
+        # The system already accounts for the configured end effector (m_ee, e.g.
+        # the Franka Hand), so declare only the remaining mass to avoid
+        # double-counting it (which over-compensates and lifts the arm).
+        if LOAD_MASS:
+            m_ee = self.panda.get_state().m_ee
+            load_mass = max(TOTAL_PAYLOAD_MASS - m_ee, 0.0)
+            self.panda.get_robot().set_load(load_mass, LOAD_F_X_CLOAD, LOAD_INERTIA)
+            print(f"[panda] set_load: m_ee={m_ee:.3f} kg, m_load={load_mass:.3f} kg, "
+              f"target m_total={TOTAL_PAYLOAD_MASS:.3f} kg", flush=True)
 
         self.gripper = Gripper(HOSTNAME)
         self.goal_position = None # Set (x,y,z) attractor
@@ -229,7 +256,20 @@ class Panda():
         dist = np.sqrt(np.sum(np.subtract(position_start, goal_array)**2, axis=0))
         
         step_num_lin = math.floor(dist / interp_dist)
-        q_goal=quaternion.quaternion(goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z)
+
+        # Orientation slerp endpoints. The quick variant used to command the goal
+        # orientation on every step (an instant orientation jump that triggers
+        # reflex errors on large rotations); interpolate the orientation instead.
+        q_start_wxyz = q_norm([self.curr_pose.pose.orientation.w,
+                               self.curr_pose.pose.orientation.x,
+                               self.curr_pose.pose.orientation.y,
+                               self.curr_pose.pose.orientation.z])
+        q_goal_wxyz = q_norm([goal_pose.pose.orientation.w,
+                              goal_pose.pose.orientation.x,
+                              goal_pose.pose.orientation.y,
+                              goal_pose.pose.orientation.z])
+        max_ori_step = math.radians(10.0)  # cap orientation change per step (~10 deg)
+        step_num_ori = max(1, math.ceil(q_angle(q_start_wxyz, q_goal_wxyz) / max_ori_step))
         if goal_configuration is None:
             quaternion_array = np.array([goal_pose.pose.orientation.w, goal_pose.pose.orientation.x, goal_pose.pose.orientation.y, goal_pose.pose.orientation.z]) 
             # normalize quaternion
@@ -262,21 +302,25 @@ class Panda():
             max_joint_distance = np.max(joint_distance)
             step_num_joint = math.ceil(max_joint_distance / interp_dist_joint)
             # step_num_joint = int(np.ceil(np.linalg.norm(goal_configuration - joint_start) / interp_dist_joint))
-            step_num=np.max([step_num_joint,step_num_lin])+1
-        
+            step_num=np.max([step_num_joint,step_num_lin,step_num_ori])+1
+
             pos_goal = np.vstack([np.linspace(start, end, step_num) for start, end in zip(position_start, [goal_pose.pose.position.x, goal_pose.pose.position.y, goal_pose.pose.position.z])]).T
             joint_goal = np.vstack([np.linspace(start, end, step_num) for start, end in zip(joint_start, goal_configuration)]).T
+            quat_goal = build_quat_seq(q_start_wxyz, q_goal_wxyz, step_num)
 
             
             i=0
             while i < step_num:
-                pose_goal = pos_quat_2_pose_st(pos_goal[i], q_goal) 
+                qw, qx, qy, qz = quat_goal[i]
+                pose_goal = pos_quat_2_pose_st(pos_goal[i], quaternion.quaternion(qw, qx, qy, qz))
                 self.move_to_pose_with_stampedpose(pose_goal)
                 self.set_configuration(joint_goal[i])
                 if self.safety_check:
-                    i= i+1 
+                    i= i+1
 
                 # r.sleep()
+                # Per-step dwell paces the whole motion: larger = slower & gentler,
+                # which avoids reflex errors on bigger pose changes.
                 time.sleep(0.01)
             
         else:
