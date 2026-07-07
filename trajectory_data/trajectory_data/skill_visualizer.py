@@ -127,7 +127,10 @@ def numpy_to_base64(img_array):
     return f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()}"
 
 
-clientside_callback(
+# Registered on THIS module's app (not the global dash registry), otherwise
+# any dashboard that merely imports this module inherits the callback and
+# complains that btn-download-svg-client is not in its layout.
+app.clientside_callback(
     """
     async function(n) {
       if (!n) { return window.dash_clientside.no_update; }
@@ -257,6 +260,158 @@ def update_clicked_image(clickData, skill_file):
     except Exception as e:
         print(f"Error updating image: {e}")
         return None
+
+TRAJ_COLORS = ['royalblue', 'darkorange', 'seagreen', 'crimson', 'purple', 'teal']
+
+
+GRIPPER_OPEN_THRESHOLD = 0.04  # [m] gripper values >= this count as open
+
+
+def _resolve_skill_path(skill_file):
+    return skill_file if (os.path.isabs(skill_file) or os.path.sep in skill_file) \
+        else os.path.join(TRAJECTORIES_DIR, skill_file)
+
+
+def load_traj(skill_file):
+    """Load only the 'traj' member of a skill npz (fast: the heavy image
+    array is never decompressed)."""
+    npz = np.load(_resolve_skill_path(skill_file))
+    return npz['traj'] if 'traj' in npz.files else npz['traj.npy']
+
+
+def load_grip(skill_file):
+    """Load only the 'grip' member of a skill npz."""
+    npz = np.load(_resolve_skill_path(skill_file))
+    grip = npz['grip'] if 'grip' in npz.files else npz['grip.npy']
+    return np.asarray(grip, dtype=float).squeeze()
+
+
+def gripper_change_indices(grip, open_threshold=GRIPPER_OPEN_THRESHOLD):
+    """Waypoint indices where the gripper switches between open and closed."""
+    is_open = np.asarray(grip).squeeze() >= open_threshold
+    return np.where(np.diff(is_open.astype(int)) != 0)[0] + 1
+
+
+def trajectories_fig(named_trajs: dict, named_grips: dict = None):
+    """Full End-Effector Trajectory view for one or more recordings overlaid
+    in one 3D scene (e.g. the put1_* and put2_* parts of a double-object
+    skill, or all recordings of an action). Keys are legend labels.
+    When named_grips is given, the waypoints where the gripper state changes
+    (open <-> close) are marked with red diamonds."""
+    fig = go.Figure()
+    change_pts = []  # (x, y, z, label, index, state)
+    for i, (label, traj) in enumerate(named_trajs.items()):
+        idx = np.arange(traj.shape[1])
+        fig.add_trace(go.Scatter3d(
+            x=traj[0, :], y=traj[1, :], z=traj[2, :],
+            mode='markers+lines',
+            marker=dict(size=3, color=idx, colorscale='Viridis', showscale=False),
+            line=dict(color=TRAJ_COLORS[i % len(TRAJ_COLORS)], width=3),
+            name=label,
+            customdata=idx,
+            hovertemplate=(f'<b>{label}</b><br>Point %{{customdata}}<br>'
+                           'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>')
+        ))
+        grip = (named_grips or {}).get(label)
+        if grip is not None:
+            n = min(traj.shape[1], len(np.atleast_1d(grip)))
+            for t in gripper_change_indices(grip[:n]):
+                if t < n:
+                    state = "opens" if grip[t] >= GRIPPER_OPEN_THRESHOLD else "closes"
+                    change_pts.append((traj[0, t], traj[1, t], traj[2, t], label, int(t), state))
+
+    if change_pts:
+        xs, ys, zs, labels, idxs, states = zip(*change_pts)
+        fig.add_trace(go.Scatter3d(
+            x=xs, y=ys, z=zs,
+            mode='markers',
+            marker=dict(size=7, color='red', symbol='diamond',
+                        line=dict(color='black', width=1)),
+            name='Gripper open/close',
+            customdata=list(zip(labels, idxs, states)),
+            hovertemplate=('<b>Gripper %{customdata[2]}</b><br>'
+                           '%{customdata[0]} @ point %{customdata[1]}<extra></extra>')
+        ))
+
+    fig.update_layout(
+        title='End-Effector Trajectory',
+        scene=dict(aspectmode='data', xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02),
+        margin=dict(l=0, r=0, b=0, t=60),
+    )
+    return fig
+
+
+def minimal_trajectory_fig(traj, max_points: int = 80):
+    """Quick-to-load minimalist variant of the 3D trajectory plot:
+    downsampled to <= max_points, progress-colored line, no colorbar, no
+    axes, no hover -- meant as a small embedded preview."""
+    step = max(1, traj.shape[1] // max_points)
+    t = traj[:, ::step]
+    idx = np.arange(t.shape[1])
+    fig = go.Figure(go.Scatter3d(
+        x=t[0], y=t[1], z=t[2],
+        mode='lines+markers',
+        marker=dict(size=3, color=idx, colorscale='Viridis', showscale=False),
+        line=dict(color='royalblue', width=3),
+        hoverinfo='skip',
+    ))
+    fig.update_layout(
+        scene=dict(aspectmode='data',
+                   xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False)),
+        margin=dict(l=0, r=0, b=0, t=0),
+        showlegend=False,
+    )
+    return fig
+
+
+def minimal_trajectory_png(skill_files, size_px: int = 240, max_points: int = 80, cache_dir=None):
+    """Render the minimalist 3D trajectory to a small PNG and return its path.
+
+    skill_files is one filename or a list: a double-object skill's part1 and
+    part2 recordings are overlaid, each with its own line color.
+    Rendered with matplotlib (Agg, no pyplot) instead of kaleido, so it needs
+    no browser and takes ~0.1 s; only the 'traj' member of each npz is
+    decompressed. The PNG is cached in TRAJECTORIES_DIR/.thumbnails and
+    reused while it is newer than the npz(s), so repeated loads are instant."""
+    if isinstance(skill_files, str):
+        skill_files = [skill_files]
+    paths = [f if (os.path.isabs(f) or os.path.sep in f) else os.path.join(TRAJECTORIES_DIR, f)
+             for f in skill_files]
+    cache_dir = cache_dir or os.path.join(TRAJECTORIES_DIR, ".thumbnails")
+    os.makedirs(cache_dir, exist_ok=True)
+    name = "__".join(os.path.basename(p).replace(".npz", "") for p in paths)
+    out = os.path.join(cache_dir, f"{name}.png")
+    if os.path.isfile(out) and os.path.getmtime(out) >= max(os.path.getmtime(p) for p in paths):
+        return out
+
+    trajs = []
+    for p in paths:
+        npz = np.load(p)
+        traj = npz['traj'] if 'traj' in npz.files else npz['traj.npy']
+        if traj.ndim == 2 and traj.shape[1] >= 2:
+            step = max(1, traj.shape[1] // max_points)
+            trajs.append(traj[:, ::step])
+    if not trajs:
+        return None
+
+    from matplotlib.figure import Figure  # Agg canvas, thread-safe (no pyplot)
+    fig = Figure(figsize=(size_px / 100, size_px / 100), dpi=100)
+    ax = fig.add_subplot(projection='3d')
+    for i, t in enumerate(trajs):
+        color = TRAJ_COLORS[i % len(TRAJ_COLORS)]
+        ax.plot(t[0], t[1], t[2], color=color, linewidth=1.5)
+        ax.scatter(t[0], t[1], t[2], color=color, s=6,
+                   alpha=np.linspace(0.35, 1.0, t.shape[1]))  # progress as opacity
+    ax.set_axis_off()
+    allt = np.concatenate(trajs, axis=1)
+    try:
+        ax.set_box_aspect(tuple(max(float(np.ptp(allt[i])), 1e-6) for i in range(3)))  # aspectmode='data'
+    except Exception:
+        pass
+    fig.savefig(out, transparent=True, bbox_inches='tight', pad_inches=0)
+    return out
+
 
 def _find_free_port(preferred=0):
     """Return an available TCP port (0 => ask OS to choose)."""
