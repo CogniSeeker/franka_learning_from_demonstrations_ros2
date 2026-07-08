@@ -5,3 +5,4 @@
 *.txt
 trajectory_data/trajectory_data.egg-info/PKG-INFO
 trajectory_data/trajectory_data.egg-info/zip-safe
+trajectory_data/trajectories/extracted_videos/*
