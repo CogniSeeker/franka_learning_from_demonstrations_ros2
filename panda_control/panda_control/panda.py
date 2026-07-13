@@ -25,7 +25,7 @@ from panda_py import controllers
 import numpy as np
 
 # Panda hostname/IP and Desk login information of your robot
-HOSTNAME = "192.168.89.140"
+HOSTNAME = "192.168.88.140"
 username = 'admin'
 password = '123456789'
 
@@ -493,7 +493,7 @@ class Panda():
         if not self.break_control_done.wait(timeout=timeout):
             raise Exception("Restart request not finished in time!")
 
-    def ctrl_node(self, frequency=500):
+    def ctrl_node(self, frequency=1000):
         while True:
             if self.go_home_flag:
                 # self.panda.move_to_start()
