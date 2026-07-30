@@ -13,14 +13,27 @@ import tf_transformations
 
 from cv_bridge import CvBridge
 import object_localization
+from object_localization.geometry import pixel_to_base, yaw_in_base
+from object_localization.tf_utils import CustomTransformListener
 from skills_manager.ros_param_manager import set_remote_parameters
 from skills_manager.ros_utils import SpinningRosNode
 
+from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 CAMERA_INFO_TOPIC = "/camera/color/camera_info"
 
-class LocalizationService(SpinningRosNode):
+# The scene is resolved in the robot base frame. "base" and "panda_link0" are the
+# same physical frame here -- panda.py broadcasts panda_link0, while the gesture
+# and pointing side (scene_marker_pub, a404.yaml) names it "base". We look up the
+# TF under the name that is actually broadcast and publish under the name
+# consumers expect.
+ROBOT_BASE_TF_FRAME = "panda_link0"
+SCENE_FRAME_ID = "base"
+CAMERA_TF_FRAME = "camera_color_optical_frame"
+
+
+class LocalizationService(CustomTransformListener, SpinningRosNode):
     def __init__(self) -> None:
         super(LocalizationService, self).__init__()
 
@@ -34,7 +47,22 @@ class LocalizationService(SpinningRosNode):
         self.declare_parameter("crop", 0.0)
         self.declare_parameter("depth", 0.0)
 
+        # Height of the plane the camera ray is intersected with, in the base
+        # frame. The table top is z=0, so that is the default. Note the measured
+        # per-template `depth:` values sit ~79 mm short of the actual
+        # camera-to-table range; that discrepancy is reported per object in
+        # get_scene rather than silently absorbed into the position.
+        self.declare_parameter("z_plane", 0.0)
+        # Minimum RANSAC inliers before a match is trusted enough to publish.
+        # Deliberately separate from localizer_sift.MIN_MATCH_COUNT, which the
+        # working servo path depends on and which must not change.
+        self.declare_parameter("min_inliers", 10)
+
         self._rate = self.create_rate(5)
+        # Template images and their SIFT descriptors are immutable, so build each
+        # Localizer once instead of once per get_scene call.
+        self._scene_localizers = {}
+        self.camera_info_msg = None
 
         self.bridge = CvBridge()
         self.image_publisher = self.create_publisher(Image, "/SIFT_localization", 10)
@@ -47,58 +75,126 @@ class LocalizationService(SpinningRosNode):
         self.create_subscription(CameraInfo, CAMERA_INFO_TOPIC, self.camera_info_callback, 5)
         time.sleep(1)
 
+    def _scene_localizer(self, name_template):
+        """Cached Localizer for a template, or None if it has no params.yaml."""
+        if name_template in self._scene_localizers:
+            return self._scene_localizers[name_template]
+        try:
+            with open(f"{object_localization.package_path}/cfg/{name_template}/params.yaml") as f:
+                tf_dict = yaml.safe_load(f)
+        except FileNotFoundError:
+            self._scene_localizers[name_template] = None
+            return None
+
+        template_path = f"{object_localization.package_path}/cfg/{name_template}/full_image.png"
+        localizer = Localizer(template_path, tf_dict['crop'], tf_dict['depth'] * 0.001)
+        self._scene_localizers[name_template] = localizer
+        return localizer
+
+    def _camera_in_base(self, stamp):
+        """T_base<-camera at the given image stamp, or None if TF is not ready.
+
+        Looked up at the image's own stamp rather than "latest": the camera is on
+        the end effector, so using a newer transform than the picture would put
+        objects wherever the arm has since moved to.
+        """
+        at_time = Time.from_msg(stamp)
+        base_hand_t, base_hand_r = self.lookup_relative_transform(
+            ROBOT_BASE_TF_FRAME, "panda_hand", at_time=at_time)
+        hand_cam_t, hand_cam_r = self.lookup_relative_transform(
+            "panda_hand", CAMERA_TF_FRAME, at_time=at_time)
+        if base_hand_t is None or hand_cam_t is None:
+            return None
+
+        def matrix(translation, rotation):
+            return (
+                tf_transformations.translation_matrix(
+                    [translation.x, translation.y, translation.z])
+                @ tf_transformations.quaternion_matrix(
+                    [rotation.x, rotation.y, rotation.z, rotation.w])
+            )
+
+        return matrix(base_hand_t, base_hand_r) @ matrix(hand_cam_t, hand_cam_r)
+
     def get_scene(self, req, res):
+        res.names = []
+        res.pose = []
+
+        if self.camera_info_msg is None:
+            self.get_logger().warning("[scene] no camera_info yet, cannot un-project")
+            return res
+
+        all_templates = []
         for folder_items in os.walk(f"{object_localization.package_path}/cfg/"):
             all_templates = folder_items[1]
             break
-        
+        if len(all_templates) == 0:
+            self.get_logger().warning("[scene] no templates found under cfg/")
+            return res
+
+        T_base_cam = self._camera_in_base(req.img.header.stamp)
+        if T_base_cam is None:
+            self.get_logger().warning("[scene] TF to the camera not available, skipping")
+            return res
+
+        K = np.array(self.camera_info_msg.k, dtype=np.float64).reshape(3, 3)
+        D = np.array(self.camera_info_msg.d, dtype=np.float64)
+        z_plane = float(self.get_parameter("z_plane").value)
+        min_inliers = int(self.get_parameter("min_inliers").value)
+        cv_image = self.bridge.imgmsg_to_cv2(req.img, "bgr8")
+
         res_names = []
         res_poses = []
-        for template_name in all_templates:
-            try:
-                with open(f"{object_localization.package_path}/cfg/{name_template}/params.yaml") as f:
-                    tf_dict = yaml.safe_load(f)
-            except FileNotFoundError:
+        for name_template in sorted(all_templates):
+            localizer = self._scene_localizer(name_template)
+            if localizer is None:
                 continue
 
-            cropping = tf_dict['crop']
-            depth = tf_dict['depth'] * 0.001
-
-            template_path = f"{object_localization.package_path}/cfg/{name_template}/full_image.png"
-            localizer = Localizer(template_path, cropping, depth)
-
-
-            cv_image = self.bridge.imgmsg_to_cv2(req.img, "bgr8")
             localizer.set_image(cv_image)
             localizer.set_camera_info(self.camera_info_msg)
-            # try:
             localizer.detect_points()
 
-            try: # if not successful -> annotated image not exist
-                localizer.annoted_image()
-            except Exception as e:
+            match = localizer.measure_object()
+            if match is None:
+                self.get_logger().info(f"[scene] {name_template}: no match, skipped")
                 continue
-            
-            tf_matrix = localizer.compute_full_tf_in_m()
-        
-            position = tf_matrix[0:3, 3]
-            try:
-                quaternion = tf_transformations.quaternion_from_matrix(tf_matrix[0:4, 0:4])
-            except np.linalg.LinAlgError:
-                quaternion = tf_transformations.quaternion_from_matrix(np.identity(4))
+            if match.inliers < min_inliers:
+                self.get_logger().info(
+                    f"[scene] {name_template}: {match.inliers} inliers < {min_inliers}, skipped")
+                continue
 
-            quaternion = quaternion/np.linalg.norm(quaternion)
+            position = pixel_to_base(K, D, T_base_cam, (match.u, match.v), z_plane)
+            if position is None:
+                self.get_logger().warning(
+                    f"[scene] {name_template}: ray cannot reach z={z_plane}, skipped")
+                continue
 
-            # TODO: FIX ABS TF TOWARDS THE OBJECT
-            if 'tf_eef_to_template_origin' in tf_dict:
-                ofs = [tf_dict['tf_eef_to_template_origin']['x'], tf_dict['tf_eef_to_template_origin']['y'], tf_dict['tf_eef_to_template_origin']['z']]
-                position += np.array(ofs)
+            quaternion = tf_transformations.quaternion_from_euler(
+                0.0, 0.0, yaw_in_base(T_base_cam, match.yaw))
 
-            print(f"Template: {name_template}", flush=True)
+            # Diagnostic only -- the plane is authoritative for position. The SIFT
+            # scale gives an independent range estimate; a persistent delta here
+            # means the extrinsics or the template `depth:` values are off, which
+            # would show up as a lateral offset rather than a wrong height.
+            range_to_plane = float(np.linalg.norm(position - T_base_cam[0:3, 3]))
+            range_from_scale = localizer.template_range() / match.scale
+            self.get_logger().info(
+                f"[scene] {name_template:14s} "
+                f"t={range_to_plane:.3f} Z_scale={range_from_scale:.3f} "
+                f"delta={1000.0 * (range_to_plane - range_from_scale):+.0f}mm "
+                f"s={match.scale:.3f} yaw={np.rad2deg(match.yaw):+.1f}deg "
+                f"inliers={match.inliers} -> "
+                f"[{position[0]:.3f}, {position[1]:.3f}, {position[2]:.3f}]")
+
             res_names.append(name_template)
-            print(position, flush=True)
-            print(quaternion, flush=True)
-            res_poses.append(PoseStamped(header=Header(), pose=Pose(position=Point(x=position[0], y=position[1], z=position[2]), orientation=Quaternion(x=quaternion[0], y=quaternion[1], z=quaternion[2], w=quaternion[3]))))
+            res_poses.append(PoseStamped(
+                header=Header(stamp=req.img.header.stamp, frame_id=SCENE_FRAME_ID),
+                pose=Pose(
+                    position=Point(x=float(position[0]), y=float(position[1]), z=float(position[2])),
+                    orientation=Quaternion(x=float(quaternion[0]), y=float(quaternion[1]),
+                                           z=float(quaternion[2]), w=float(quaternion[3])),
+                ),
+            ))
 
         res.names = res_names
         res.pose = res_poses

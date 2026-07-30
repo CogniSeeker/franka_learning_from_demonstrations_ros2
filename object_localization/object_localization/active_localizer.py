@@ -23,8 +23,6 @@ from object_localization.tf_utils import CustomTransformListener
 
 CAMERA_COLOR_TOPIC = '/camera/color/image_raw'
 
-SCENE_PUBLISHING = False
-
 import threading
 import scene_msgs.msg as scene_ros
 
@@ -60,41 +58,68 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         # self._prev_img = None
         self.img_last_rec = 0.0
 
-        self.publishing_scene = True
-        if SCENE_PUBLISHING:
-            spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
-            spinning_thread.start()
-        self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
-        
         self.curr_pos = None
+        self.curr_ori_wxyz = None
+
+        self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
+        # Off until asked. start_publishing_scene / stop_publishing_scene are the
+        # switch -- lfd.py and SceneGetterViaObjectLocalizer already call them, so
+        # gating the thread's *existence* on a module constant made them inert.
+        self.publishing_scene = False
+        spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
+        spinning_thread.start()
 
     def publish_scene_thread(self):
         from scene_getter.scene_lib.scene import Scene
         from scene_getter.scene_lib.scene_object import SceneObject
-        
-        while True:
-            if self.publishing_scene and self._img is not None and self.curr_pos is not None:
-                time.sleep(1.0)
-                scene = self.compute_scene_positions_client.call(GetScene.Request(img=self._img))
 
-                scene_objects = []
-                for name,posestamped in zip(scene.names, scene.pose):
-                    pose = posestamped.pose
-                    
-                    position = self.curr_pos
-                    ori = list_2_quaternion(self.curr_ori_wxyz)
-                    home_pose = pos_quat_2_pose_st(position, ori)
-                    tfpose = self.transform(posestamped, home_pose, check_z_axis=False)
-                    
-                    objectdata = {
-                        "position":    [tfpose.pose.position.x, tfpose.pose.position.y, tfpose.pose.position.z],
-                        "orientation": [tfpose.pose.orientation.x, tfpose.pose.orientation.y, tfpose.pose.orientation.z, tfpose.pose.orientation.w],
+        while True:
+            time.sleep(1.0)
+            if not self.publishing_scene or self._img is None:
+                continue
+            # Same freshness rule handle_request uses: a stale frame yields a
+            # stale scene, and the server cannot tell the difference.
+            if (time.time() - self.img_last_rec) > 1.0:
+                self.get_logger().warning("[scene] image is not fresh, skipping")
+                continue
+
+            # Everything below is inside try/except because this runs in a bare
+            # thread: an unhandled exception would kill it silently and publishing
+            # would simply stop with nothing in the log.
+            try:
+                scene_response = self.compute_scene_positions_client.call(
+                    GetScene.Request(img=self._img))
+                if scene_response is None:
+                    self.get_logger().warning("[scene] compute_object_positions returned nothing")
+                    continue
+
+                # The server resolves poses in the robot base frame at the image's
+                # own stamp, so there is nothing left to transform here. In
+                # particular do NOT route these through self.transform(): that is
+                # the servoing helper, and it clamps z to the home EE height and
+                # flattens orientation.
+                scene_objects = [
+                    SceneObject.from_dict(name, {
+                        "position": [
+                            posestamped.pose.position.x,
+                            posestamped.pose.position.y,
+                            posestamped.pose.position.z,
+                        ],
+                        "orientation": [
+                            posestamped.pose.orientation.x,
+                            posestamped.pose.orientation.y,
+                            posestamped.pose.orientation.z,
+                            posestamped.pose.orientation.w,
+                        ],
                         "params": "",
-                    }
-                    scene_objects.append(SceneObject.from_dict(name, objectdata))
+                    })
+                    for name, posestamped in zip(scene_response.names, scene_response.pose)
+                ]
 
                 scene = Scene(name="active_localizer_scene", objects=scene_objects)
                 self.scene_pub.publish(scene.to_ros())
+            except Exception as error:  # noqa: BLE001 -- keep the thread alive
+                self.get_logger().error(f"[scene] publish failed: {error}")
 
     def curr_pose_callback(self, msg):
         self.curr_pos = [msg.pose.position.x, msg.pose.position.y, msg.pose.position.z]
@@ -107,10 +132,12 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         
     def start_publishing_scene(self, req, res):
         self.publishing_scene = True
+        res.success = True  # Trigger.Response defaults to False; callers check it
         return res
 
     def stop_publishing_scene(self, req, res):
         self.publishing_scene = False
+        res.success = True
         return res
 
     def handle_request(self, req, res):
