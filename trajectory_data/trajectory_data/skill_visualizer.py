@@ -7,6 +7,7 @@ from PIL import Image
 import base64
 import io
 import plotly.io as pio  # uses Kaleido for image export
+from functools import lru_cache
 
 import socket, uuid, os, io, base64
 from IPython.display import display
@@ -266,21 +267,72 @@ TRAJ_COLORS = ['royalblue', 'darkorange', 'seagreen', 'crimson', 'purple', 'teal
 
 GRIPPER_OPEN_THRESHOLD = 0.04  # [m] gripper values >= this count as open
 
+CURRENT_FRAME_TRACE = 'current frame'  # the marker a viewer moves, last trace
+
+
+def gripper_glyph(point, is_open: bool, size: float):
+    """A little gripper drawn at one waypoint, as (x, y, z) polylines.
+
+    Scatter3d markers only come in Plotly's fixed symbol set and a 3D scene
+    takes no images, so the gripper is line segments: a stem, a crossbar and
+    two jaws whose gap is the whole point -- wide when the gripper is open,
+    nearly shut when it is closed. Axis-aligned; the recorded `ori` would let
+    it follow the wrist, at the cost of a quaternion rotation per frame."""
+    cx, cy, cz = (float(c) for c in point)
+    w = size * (0.55 if is_open else 0.14)   # half the jaw gap
+    top, bar, tip = cz + size, cz + 0.35 * size, cz - 0.1 * size
+    return (
+        [cx, cx, None, cx - w, cx + w, None, cx - w, cx - w, None, cx + w, cx + w],
+        [cy, cy, None, cy,     cy,     None, cy,     cy,     None, cy,     cy],
+        [top, bar, None, bar,  bar,    None, bar,    tip,    None, bar,    tip],
+    )
+
 
 def _resolve_skill_path(skill_file):
     return skill_file if (os.path.isabs(skill_file) or os.path.sep in skill_file) \
         else os.path.join(TRAJECTORIES_DIR, skill_file)
 
 
+@lru_cache(maxsize=32)
 def load_traj(skill_file):
     """Load only the 'traj' member of a skill npz (fast: the heavy image
-    array is never decompressed)."""
+    array is never decompressed). Cached: a viewer re-reads it on every mouse
+    move to place its marker. Treat the result as read-only."""
     npz = np.load(_resolve_skill_path(skill_file))
     return npz['traj'] if 'traj' in npz.files else npz['traj.npy']
 
 
+@lru_cache(maxsize=6)
+def load_images(skill_file):
+    """The camera frames recorded alongside the trajectory, one per waypoint.
+
+    Cached: the array is tens of MB and a viewer asks for one frame at a time
+    while the mouse moves along the trajectory."""
+    npz = np.load(_resolve_skill_path(skill_file))
+    return npz['img'] if 'img' in npz.files else npz['img.npy']
+
+
+def frame_data_uri(skill_file, index: int, quality: int = 72):
+    """One recorded camera frame as a JPEG data URI (a few kB, ~2 ms), or None
+    when the recording has no images or the index is out of range."""
+    try:
+        frames = load_images(skill_file)
+    except Exception as e:  # noqa: BLE001 -- recording without an img member
+        print(f"No camera frames in {skill_file}: {e}")
+        return None
+    if index < 0 or index >= len(frames):
+        return None
+    frame = frames[index]
+    if frame.ndim == 3:  # (n, h, w): a single frame was stored wrapped
+        frame = frame[0]
+    buffered = io.BytesIO()
+    Image.fromarray(frame.astype('uint8')).save(buffered, format="JPEG", quality=quality)
+    return f"data:image/jpeg;base64,{base64.b64encode(buffered.getvalue()).decode()}"
+
+
+@lru_cache(maxsize=32)
 def load_grip(skill_file):
-    """Load only the 'grip' member of a skill npz."""
+    """Load only the 'grip' member of a skill npz. Cached, read-only."""
     npz = np.load(_resolve_skill_path(skill_file))
     grip = npz['grip'] if 'grip' in npz.files else npz['grip.npy']
     return np.asarray(grip, dtype=float).squeeze()
@@ -309,8 +361,10 @@ def trajectories_fig(named_trajs: dict, named_grips: dict = None):
             line=dict(color=TRAJ_COLORS[i % len(TRAJ_COLORS)], width=3),
             name=label,
             customdata=idx,
-            hovertemplate=(f'<b>{label}</b><br>Point %{{customdata}}<br>'
-                           'X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>')
+            # 'none', not 'skip': no tooltip box (it lands right on top of the
+            # gripper glyph drawn at the hovered waypoint) but hover events
+            # still fire, which is what drives the camera view.
+            hoverinfo='none',
         ))
         grip = (named_grips or {}).get(label)
         if grip is not None:
@@ -333,9 +387,19 @@ def trajectories_fig(named_trajs: dict, named_grips: dict = None):
                            '%{customdata[0]} @ point %{customdata[1]}<extra></extra>')
         ))
 
+    # Always last, always empty to start: a viewer draws a gripper_glyph here,
+    # at the waypoint whose camera frame it is showing (see CURRENT_FRAME_TRACE).
+    fig.add_trace(go.Scatter3d(
+        x=[], y=[], z=[], mode='lines',
+        line=dict(color='#111', width=6),
+        name=CURRENT_FRAME_TRACE, showlegend=False, hoverinfo='skip'))
+
     fig.update_layout(
         title='End-Effector Trajectory',
-        scene=dict(aspectmode='data', xaxis_title='X', yaxis_title='Y', zaxis_title='Z'),
+        scene=dict(aspectmode='data', xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+                   # Plotly's default eye (1.25) crops a data-aspect scene; back
+                   # off so the whole trajectory is in view before any dragging.
+                   camera=dict(eye=dict(x=2.5, y=2.5, z=1.7))),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=0, r=0, b=0, t=60),
     )
