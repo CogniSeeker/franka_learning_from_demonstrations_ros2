@@ -58,15 +58,6 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         # self._prev_img = None
         self.img_last_rec = 0.0
 
-<<<<<<< Updated upstream
-=======
-        self.publishing_scene = True
-        if SCENE_PUBLISHING:
-            spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
-            spinning_thread.start()
-        self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
-
->>>>>>> Stashed changes
         self.curr_pos = None
         self.curr_ori_wxyz = None
 
@@ -81,7 +72,6 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
     def publish_scene_thread(self):
         from scene_getter.scene_lib.scene import Scene
         from scene_getter.scene_lib.scene_object import SceneObject
-<<<<<<< Updated upstream
 
         while True:
             time.sleep(1.0)
@@ -121,26 +111,6 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
                             posestamped.pose.orientation.z,
                             posestamped.pose.orientation.w,
                         ],
-=======
-
-        while True:
-            if self.publishing_scene and self._img is not None and self.curr_pos is not None:
-                time.sleep(1.0)
-                scene = self.compute_scene_positions_client.call(GetScene.Request(img=self._img))
-
-                scene_objects = []
-                for name,posestamped in zip(scene.names, scene.pose):
-                    pose = posestamped.pose
-
-                    position = self.curr_pos
-                    ori = list_2_quaternion(self.curr_ori_wxyz)
-                    home_pose = pos_quat_2_pose_st(position, ori)
-                    tfpose = self.transform(posestamped, home_pose, check_z_axis=False)
-
-                    objectdata = {
-                        "position":    [tfpose.pose.position.x, tfpose.pose.position.y, tfpose.pose.position.z],
-                        "orientation": [tfpose.pose.orientation.x, tfpose.pose.orientation.y, tfpose.pose.orientation.z, tfpose.pose.orientation.w],
->>>>>>> Stashed changes
                         "params": "",
                     })
                     for name, posestamped in zip(scene_response.names, scene_response.pose)

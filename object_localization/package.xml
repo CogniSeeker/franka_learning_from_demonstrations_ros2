@@ -12,14 +12,11 @@
   <build_depend>rclpy</build_depend>
   <build_export_depend>rclpy</build_export_depend>
   <exec_depend>rclpy</exec_depend>
-<<<<<<< Updated upstream
   <exec_depend>tf2_ros</exec_depend>
-=======
   <exec_depend>lfd_msgs</exec_depend>
->>>>>>> Stashed changes
 
   <export>
     <build_type>ament_python</build_type>
   </export>
-	
+
 </package>
