@@ -9,6 +9,7 @@ from launch.substitutions import LaunchConfiguration
 
 # CAMERA_SERIAL_NO = '"105322250337"'
 CAMERA_SERIAL_NO = '"318122300789"'
+# CAMERA_SERIAL_NO = '"920312072256"'
 
 def generate_launch_description():
     log_level = DeclareLaunchArgument("log_level", default_value="warn")

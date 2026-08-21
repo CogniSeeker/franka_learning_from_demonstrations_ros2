@@ -58,6 +58,15 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         # self._prev_img = None
         self.img_last_rec = 0.0
 
+<<<<<<< Updated upstream
+=======
+        self.publishing_scene = True
+        if SCENE_PUBLISHING:
+            spinning_thread = threading.Thread(target=self.publish_scene_thread, args=(), daemon=True)
+            spinning_thread.start()
+        self.scene_pub = self.create_publisher(scene_ros.Scene, "/scene", 5)
+
+>>>>>>> Stashed changes
         self.curr_pos = None
         self.curr_ori_wxyz = None
 
@@ -72,6 +81,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
     def publish_scene_thread(self):
         from scene_getter.scene_lib.scene import Scene
         from scene_getter.scene_lib.scene_object import SceneObject
+<<<<<<< Updated upstream
 
         while True:
             time.sleep(1.0)
@@ -111,6 +121,26 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
                             posestamped.pose.orientation.z,
                             posestamped.pose.orientation.w,
                         ],
+=======
+
+        while True:
+            if self.publishing_scene and self._img is not None and self.curr_pos is not None:
+                time.sleep(1.0)
+                scene = self.compute_scene_positions_client.call(GetScene.Request(img=self._img))
+
+                scene_objects = []
+                for name,posestamped in zip(scene.names, scene.pose):
+                    pose = posestamped.pose
+
+                    position = self.curr_pos
+                    ori = list_2_quaternion(self.curr_ori_wxyz)
+                    home_pose = pos_quat_2_pose_st(position, ori)
+                    tfpose = self.transform(posestamped, home_pose, check_z_axis=False)
+
+                    objectdata = {
+                        "position":    [tfpose.pose.position.x, tfpose.pose.position.y, tfpose.pose.position.z],
+                        "orientation": [tfpose.pose.orientation.x, tfpose.pose.orientation.y, tfpose.pose.orientation.z, tfpose.pose.orientation.w],
+>>>>>>> Stashed changes
                         "params": "",
                     })
                     for name, posestamped in zip(scene_response.names, scene_response.pose)
@@ -129,7 +159,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
         # self._prev_img = deepcopy(self._img)
         self.img_last_rec = time.time()
         self._img = img
-        
+
     def start_publishing_scene(self, req, res):
         self.publishing_scene = True
         res.success = True  # Trigger.Response defaults to False; callers check it
@@ -156,7 +186,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
             position = self.curr_pos
             ori = list_2_quaternion(self.curr_ori_wxyz)
             home_pose = pos_quat_2_pose_st(position, ori)
-            
+
             try:
                 resp = self.compute_box_tf.call(request=ComputeLocalization.Request(img=self._img))
                 box_tf = resp.pose
@@ -167,7 +197,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
                     resp.pose.pose.orientation.w
                 ]
                 xy_yaw = [
-                    resp.pose.pose.position.x, 
+                    resp.pose.pose.position.x,
                     resp.pose.pose.position.y,
                     euler_from_quaternion(ori)[2]
                 ]
@@ -176,7 +206,7 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
                 continue
 
             self._transformed_pose = self.transform(box_tf, home_pose)
- 
+
             assert self._transformed_pose.pose.position.z > 0.1
             self.goal_pose_pub.publish(self._transformed_pose)
             self._rate.sleep()
@@ -198,12 +228,12 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
             try:
                 translation1, rotation1 = self.lookup_relative_transform("panda_link0", "panda_hand")
                 translation2, rotation2 = self.lookup_relative_transform("panda_hand", "camera_color_optical_frame")
-                
+
                 rp_tr1 = [translation1.x, translation1.y, translation1.z]
                 rp_rt1 = [rotation1.x, rotation1.y, rotation1.z, rotation1.w]
                 rp_tr2 = [translation2.x, translation2.y, translation2.z]
                 rp_rt2 = [rotation2.x, rotation2.y, rotation2.z, rotation2.w]
-                
+
                 transform = np.dot(
                     tf_transformations.translation_matrix(rp_tr1),
                     tf_transformations.quaternion_matrix(rp_rt1),
@@ -217,13 +247,13 @@ class ActiveLocalizerNode(CustomTransformListener, SpinningRosNode):
                     tf_transformations.quaternion_matrix(rp_rt2),
                 )
                 return transform
-                
+
             except Exception as e:
                 time.sleep(0.3)
                 print(f"Transform lookup failed: {e}. Retrying...", flush=True)
 
-        
-    
+
+
     def transform(self, transformation_pose, pose, check_z_axis=True):
         transform_base_2_cam = self.get_transform_camera()
 

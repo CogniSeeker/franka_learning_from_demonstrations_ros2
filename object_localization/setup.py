@@ -10,6 +10,8 @@ setup(
     packages=[package_name],
     install_requires=['setuptools'],
     data_files=[
+        ('share/ament_index/resource_index/packages',
+         ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         # ('share/' + package_name + '/config', glob('config/*.yaml')),
@@ -30,6 +32,7 @@ setup(
             "record_template = object_localization.record_template:main",
             "localizer_service = object_localization.localizer_service:main",
             "active_localizer = object_localization.active_localizer:main",
+            "mock_object_detector = object_localization.mock_object_detector:main",
         ],
     },
 )

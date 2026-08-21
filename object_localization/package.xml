@@ -8,11 +8,15 @@
   <author email="gfranzese@tudelft.nl">giovannifranzese (Original Author)</author>
   <license>MIT</license>
 
-  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_python</buildtool_depend>
   <build_depend>rclpy</build_depend>
   <build_export_depend>rclpy</build_export_depend>
   <exec_depend>rclpy</exec_depend>
+<<<<<<< Updated upstream
   <exec_depend>tf2_ros</exec_depend>
+=======
+  <exec_depend>lfd_msgs</exec_depend>
+>>>>>>> Stashed changes
 
   <export>
     <build_type>ament_python</build_type>
