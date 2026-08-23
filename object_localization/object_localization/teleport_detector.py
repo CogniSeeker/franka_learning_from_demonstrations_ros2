@@ -31,9 +31,9 @@ DETECTED_OBJECT_TOPIC = "/perception/detected_object"
 # TODO bad logic. Not adapted for contemporary TF publishing
 # "panda_link0 = base frame"
 # "camera3_link = camera frame"
-BASE_CAMERA_TF_TOPIC = "panda_link0_to_camera3_link"
-ROBOT_BASE_TF_FRAME = "base_frame"
-ROBOT_CAMERA_TF_FRAME = "camera_frame"
+# BASE_CAMERA_TF_TOPIC = "panda_link0_to_camera2_link"
+ROBOT_BASE_TF_FRAME = "panda_link0"
+ROBOT_CAMERA_TF_FRAME = "camera2_link"
 
 CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
 CAMERA_INFO_TOPIC = "/camera/color/camera_info"
@@ -178,8 +178,20 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         detections, stamp = self._pending_batch
         at_time = Time.from_msg(stamp)
 
-        # TODO: read trasform matrix here - TransformStamped
-        transform: TransformStamped | None = None
+        if not self.tf_buffer.can_transform(
+            ROBOT_BASE_TF_FRAME,
+            ROBOT_CAMERA_TF_FRAME,
+            at_time,
+            timeout=Duration(seconds=0),
+        ):
+            return
+
+        transform = self.tf_buffer.lookup_transform(
+            ROBOT_BASE_TF_FRAME,
+            ROBOT_CAMERA_TF_FRAME,
+            at_time,
+            timeout=Duration(seconds=0),
+        )
 
         self.publish_detections(detections, transform, stamp)
         self._pending_batch = None
