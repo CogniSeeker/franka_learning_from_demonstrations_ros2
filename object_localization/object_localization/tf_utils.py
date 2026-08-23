@@ -4,6 +4,9 @@ from rclpy.node import Node
 from rclpy.time import Time
 import tf2_ros
 
+ROBOT_BASE_TF_FRAME = "panda_link0"
+CAMERA_TF_FRAME = "camera3_link"
+# CAMERA_TF_FRAME = "panda_hand"
 
 class CustomTransformListener():
     """TF lookups backed by tf2_ros.
@@ -72,7 +75,7 @@ def main(args=None):
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
     rate = node.create_rate(10)
 
-    source_frame, target_frame = 'panda_link0', 'panda_hand'
+    source_frame, target_frame = ROBOT_BASE_TF_FRAME, CAMERA_TF_FRAME
     try:
         # the buffer needs a moment of spinning before the chain is complete
         for _ in range(50):

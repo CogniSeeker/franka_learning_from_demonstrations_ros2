@@ -91,6 +91,7 @@ class LocalizationService(CustomTransformListener, SpinningRosNode):
         self._scene_localizers[name_template] = localizer
         return localizer
 
+    # TODO: check if panda_link0 → camera_color_optical_frame transform is needed at all
     def _camera_in_base(self, stamp):
         """T_base<-camera at the given image stamp, or None if TF is not ready.
 
@@ -220,13 +221,13 @@ class LocalizationService(CustomTransformListener, SpinningRosNode):
 
         cropping = tf_dict['crop']
         depth = tf_dict['depth'] * 0.001
-        
-        set_remote_parameters(self, 
+
+        set_remote_parameters(self,
             ["crop", "depth", "position_x", "position_y", "position_z", "orientation_x", "orientation_y", "orientation_z", "orientation_w"],
             [tf_dict['crop'], tf_dict['depth'], tf_dict['position']["x"], tf_dict['position']["y"], tf_dict['position']["z"], tf_dict['orientation']["x"],
             tf_dict['orientation']["y"], tf_dict['orientation']["z"], tf_dict['orientation']["w"]]
             , server=self.get_name())
-        
+
         template_path = f"{object_localization.package_path}/cfg/{name_template}/full_image.png"
         self._localizer = Localizer(template_path, cropping, depth)
         print(f"localizer set to {name_template}", flush=True)
@@ -235,7 +236,7 @@ class LocalizationService(CustomTransformListener, SpinningRosNode):
 
     def camera_info_callback(self, msg):
         self.camera_info_msg = msg
-        
+
 
     def compute_localization_in_pixels(self, img: Image):
         cv_image = self.bridge.imgmsg_to_cv2(img, "bgr8")
@@ -250,17 +251,17 @@ class LocalizationService(CustomTransformListener, SpinningRosNode):
             print(e)
             print('Returning identity')
             return np.identity(4)
-        
+
         tf_matrix = self._localizer.compute_full_tf_in_m()
         return tf_matrix
-    
+
     def publish_annoted_image(self):
         ros_image = self.bridge.cv2_to_imgmsg(self._localizer.annoted_image(), "bgr8")
         self.image_publisher.publish(ros_image)
 
     def handle_request(self, req, response):
         tf_matrix = self.compute_localization_in_pixels(req.img)
-        
+
         position = tf_matrix[0:3, 3]
         try:
             quaternion = tf_transformations.quaternion_from_matrix(tf_matrix[0:4, 0:4])
