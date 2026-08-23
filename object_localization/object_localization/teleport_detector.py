@@ -8,7 +8,7 @@ import time
 from typing import Any
 
 from cv_bridge import CvBridge
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, TransformStamped
 from lfd_msgs.msg import DetectedObject as DetectedObjectMsg
 import numpy as np
 import rclpy
@@ -29,9 +29,11 @@ from skills_manager.ros_utils import SpinningRosNode
 
 DETECTED_OBJECT_TOPIC = "/perception/detected_object"
 # TODO bad logic. Not adapted for contemporary TF publishing
-ROBOT_BASE_TF_FRAME = "panda_link0"
-ROBOT_CAMERA_TF_FRAME = "camera3_link"
-ROBOT_CAMERA_TF_FRAME = "camera3_link"
+# "panda_link0 = base frame"
+# "camera3_link = camera frame"
+BASE_CAMERA_TF_TOPIC = "panda_link0_to_camera3_link"
+ROBOT_BASE_TF_FRAME = "base_frame"
+ROBOT_CAMERA_TF_FRAME = "camera_frame"
 
 CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
 CAMERA_INFO_TOPIC = "/camera/color/camera_info"
@@ -175,20 +177,10 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
 
         detections, stamp = self._pending_batch
         at_time = Time.from_msg(stamp)
-        if not self.tf_buffer.can_transform(
-            ROBOT_BASE_TF_FRAME,
-            ROBOT_CAMERA_TF_FRAME,
-            at_time,
-            timeout=Duration(seconds=0),
-        ):
-            return
 
-        transform = self.tf_buffer.lookup_transform(
-            ROBOT_BASE_TF_FRAME,
-            ROBOT_CAMERA_TF_FRAME,
-            at_time,
-            timeout=Duration(seconds=0),
-        )
+        # TODO: read trasform matrix here - TransformStamped
+        transform: TransformStamped | None = None
+
         self.publish_detections(detections, transform, stamp)
         self._pending_batch = None
         self._published_batch = True
