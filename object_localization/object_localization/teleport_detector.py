@@ -28,10 +28,7 @@ from object_localization.tf_utils import CustomTransformListener
 from skills_manager.ros_utils import SpinningRosNode
 
 DETECTED_OBJECT_TOPIC = "/perception/detected_object"
-# TODO bad logic. Not adapted for contemporary TF publishing
-# "panda_link0 = base frame"
-# "camera3_link = camera frame"
-# BASE_CAMERA_TF_TOPIC = "panda_link0_to_camera2_link"
+
 ROBOT_BASE_TF_FRAME = "panda_link0"
 ROBOT_CAMERA_TF_FRAME = "camera2_link"
 

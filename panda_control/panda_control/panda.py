@@ -328,7 +328,7 @@ class Panda():
 
     def go_to_pose_ik(self, goal_pose: PoseStamped, goal_configuration=None,
                     interp_dist=0.002, interp_dist_joint=0.008,
-                    dt = 0.02,
+                    dt = 0.08, # NOTE: changed from 0.02 to reduce speed
                     ):
         self.set_stiffness(1000,1000,1000,80,80,80,0)
         # self.move_to_pose_with_stampedpose(self.curr_pose)
