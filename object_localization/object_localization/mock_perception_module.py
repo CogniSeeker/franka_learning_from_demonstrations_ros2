@@ -13,9 +13,11 @@ class MockPerceptionModel:
         del bgr_image, camera_info
         return [
             SimpleNamespace(
-                object_id="button_1",
-                class_name="button",
-                state="unpressed",
+                detection_id=1,
+                layout_id="button_1",
+                classified_class="button",
+                yolo_class="button",
+                state=SimpleNamespace(name="unpressed"),
                 confidence=1.0,
                 pose=SimpleNamespace(
                     position=(0.3, 0.0, 0.0),
@@ -24,13 +26,15 @@ class MockPerceptionModel:
                 pose_valid=True,
             ),
             SimpleNamespace(
-                object_id="cup_1",
-                class_name="cup",
-                state="unknown",
+                detection_id=2,
+                layout_id="cup_1",
+                classified_class="cup",
+                yolo_class="cup",
+                state=None,
                 confidence=0.9,
                 pose=SimpleNamespace(
                     position=(0.15, -0.1, 0.5),
-                    orientation=None,
+                    orientation=(0.0, 0.0, 0.0, 1.0),
                 ),
                 pose_valid=True,
             ),

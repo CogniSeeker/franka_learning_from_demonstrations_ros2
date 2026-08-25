@@ -35,17 +35,17 @@ def generate_launch_description():
         }.items()
     )
 
-    # Static transform publisher node
-    camera_tf_publisher_node = Node(
-        package="object_localization",
-        executable="static_transform_camera",
-        name="camera_tf_publisher",
-        output="screen",
-    )
+    # # Static transform publisher node
+    # camera_tf_publisher_node = Node(
+    #     package="object_localization",
+    #     executable="static_transform_camera",
+    #     name="camera_tf_publisher",
+    #     output="screen",
+    # )
 
     return LaunchDescription([
         log_level,
         serial_no,
         realsense_launch,
-        camera_tf_publisher_node
+        # camera_tf_publisher_node
     ])

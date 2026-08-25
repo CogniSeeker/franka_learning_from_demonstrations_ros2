@@ -34,6 +34,7 @@ ROBOT_CAMERA_TF_FRAME = "camera2_link"
 
 CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
 CAMERA_INFO_TOPIC = "/camera/color/camera_info"
+CAMERA_WARMUP_SECONDS = 3.0
 
 
 def detected_object_qos() -> QoSProfile:
@@ -55,7 +56,7 @@ class PerceptionModuleWrapper:
 
     The loaded model must provide:
 
-      inference(bgr_image, camera_info) -> list[DetectedObject]
+      inference(bgr_image, camera_info) -> list[DeckItem] | Deck
     """
 
     def __init__(
@@ -64,6 +65,7 @@ class PerceptionModuleWrapper:
         loader_name: str,
         inference_name: str,
         weights_path: str,
+        logger: Any,
     ) -> None:
         if not module_name:
             raise ValueError("model_module parameter must not be empty")
@@ -74,20 +76,27 @@ class PerceptionModuleWrapper:
         if not weights_path:
             raise ValueError("model_weights parameter must not be empty")
 
+        logger.info(f"importing perception module {module_name}")
         module = import_module(module_name)
+        logger.info(f"perception module imported; calling {loader_name}()")
         loader = getattr(module, loader_name)
         self._model = loader(weights_path)
+        logger.info("perception model loaded")
         self._inference = getattr(self._model, inference_name)
+        logger.info(f"perception entrypoint ready: {inference_name}()")
 
     def infer(
         self,
         bgr_image: np.ndarray,
         camera_info: CameraInfo,
     ) -> list[Any]:
-        detections = self._inference(bgr_image, camera_info)
+        result = self._inference(bgr_image, camera_info)
+        detections = (
+            result if isinstance(result, list) else getattr(result, "items", None)
+        )
         if not isinstance(detections, list):
             raise TypeError(
-                "perception inference must return a Python list of DetectedObject"
+                "perception inference must return a Deck or a Python list of DeckItem"
             )
         return detections
 
@@ -95,18 +104,16 @@ class PerceptionModuleWrapper:
 class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
     """Transform and publish detections returned by the perception package.
 
-    The perception module is expected to return a Python list whose elements
-    expose the same fields as lfd_msgs/msg/DetectedObject. Its pose is a Python
-    object with position=(x, y, z) and either orientation=(x, y, z, w) or
-    orientation=None.
+    The perception module is expected to return a Deck or a list of DeckItem.
 
-    Camera frames are passed to the model automatically. Detection poses must
-    use ROBOT_CAMERA_TF_FRAME coordinates. The batch retains the image timestamp
-    and waits until the corresponding camera-to-base TF is buffered.
+    Camera frames are passed to the model automatically. DeckItem interaction
+    poses use the optical frame from CameraInfo. The batch retains the image
+    timestamp and waits until the corresponding camera-to-base TF is buffered.
     """
 
     def __init__(self) -> None:
         super().__init__()
+        self.get_logger().info("initializing teleport detector")
 
         self.declare_parameter("model_module", "")
         self.declare_parameter("model_loader", "")
@@ -118,11 +125,17 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             loader_name=str(self.get_parameter("model_loader").value),
             inference_name=str(self.get_parameter("model_inference").value),
             weights_path=str(self.get_parameter("model_weights").value),
+            logger=self.get_logger(),
         )
         self._bridge = CvBridge()
         self._camera_info: CameraInfo | None = None
         self._published_batch = False
-        self._pending_batch: tuple[list[Any], Any] | None = None
+        self._pending_batch: tuple[list[Any], Any, str] | None = None
+        self._seen_camera_info = False
+        self._seen_image = False
+        self._waiting_for_camera_info_logged = False
+        self._waiting_for_tf_logged = False
+        self._camera_warmup_until: float | None = None
 
         self._publisher = self.create_publisher(
             DetectedObjectMsg,
@@ -145,26 +158,78 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             0.02,
             self._try_publish_pending_batch,
         )
+        self.get_logger().info(
+            f"ready; camera warm-up will start with the first image and last "
+            f"{CAMERA_WARMUP_SECONDS:.0f}s; "
+            f"subscribed to {CAMERA_COLOR_TOPIC} and {CAMERA_INFO_TOPIC}"
+        )
 
     def _camera_info_callback(self, camera_info: CameraInfo) -> None:
         """Store the latest camera calibration."""
+        if (
+            self._camera_warmup_until is None
+            or time.monotonic() < self._camera_warmup_until
+        ):
+            return
         self._camera_info = camera_info
+        if not self._seen_camera_info:
+            self._seen_camera_info = True
+            self.get_logger().info(
+                f"received CameraInfo {camera_info.width}x{camera_info.height} "
+                f"frame={camera_info.header.frame_id!r}"
+            )
 
     def _image_callback(self, image: Image) -> None:
         """Run inference once and retain its result until matching TF arrives."""
+        now = time.monotonic()
+        if self._camera_warmup_until is None:
+            self._camera_warmup_until = now + CAMERA_WARMUP_SECONDS
+            self.get_logger().info(
+                f"first image received; warming up camera for "
+                f"{CAMERA_WARMUP_SECONDS:.0f}s"
+            )
+            return
+        if now < self._camera_warmup_until:
+            return
+        if not self._seen_image:
+            self._seen_image = True
+            self.get_logger().info(
+                f"received image {image.width}x{image.height} "
+                f"frame={image.header.frame_id!r}"
+            )
         if self._published_batch or self._pending_batch is not None:
             return
         if self._camera_info is None:
+            if not self._waiting_for_camera_info_logged:
+                self._waiting_for_camera_info_logged = True
+                self.get_logger().warning("image received; waiting for CameraInfo")
             return
 
         bgr_image = self._bridge.imgmsg_to_cv2(image, "bgr8")
-        detections = self._model.infer(bgr_image, self._camera_info)
+        self.get_logger().info("starting perception inference")
+        started = time.perf_counter()
+        try:
+            detections = self._model.infer(bgr_image, self._camera_info)
+        except Exception as error:
+            self.get_logger().error(
+                f"perception inference failed: {type(error).__name__}: {error}"
+            )
+            raise
+        self.get_logger().info(
+            f"perception inference finished in {time.perf_counter() - started:.2f}s; "
+            f"items={len(detections)}"
+        )
         if not detections:
+            self.get_logger().warning("perception returned no deck items")
             return
 
         self._pending_batch = (
             detections,
             image.header.stamp,
+            # TODO: this way it forces it to run panda_a404_calib to publish TF2.
+            # Rewrite if needed
+            # self._camera_info.header.frame_id or ROBOT_CAMERA_TF_FRAME,
+            ROBOT_CAMERA_TF_FRAME
         )
 
     def _try_publish_pending_batch(self) -> None:
@@ -172,20 +237,29 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         if self._pending_batch is None:
             return
 
-        detections, stamp = self._pending_batch
+        detections, stamp, camera_frame = self._pending_batch
         at_time = Time.from_msg(stamp)
 
         if not self.tf_buffer.can_transform(
             ROBOT_BASE_TF_FRAME,
-            ROBOT_CAMERA_TF_FRAME,
+            camera_frame,
             at_time,
             timeout=Duration(seconds=0),
         ):
+            if not self._waiting_for_tf_logged:
+                self._waiting_for_tf_logged = True
+                self.get_logger().warning(
+                    f"detections ready; waiting for TF {ROBOT_BASE_TF_FRAME} <- "
+                    f"{camera_frame} at image time"
+                )
             return
+
+        if self._waiting_for_tf_logged:
+            self.get_logger().info("camera-to-base TF is now available")
 
         transform = self.tf_buffer.lookup_transform(
             ROBOT_BASE_TF_FRAME,
-            ROBOT_CAMERA_TF_FRAME,
+            camera_frame,
             at_time,
             timeout=Duration(seconds=0),
         )
@@ -200,18 +274,33 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         transform: Any,
         stamp: Any,
     ) -> DetectedObjectMsg:
-        """Encode one Python detection as an lfd_msgs ROS message."""
+        """Encode one deck_scene.models.DeckItem as a ROS message."""
         msg = DetectedObjectMsg()
         msg.header.stamp = stamp
         msg.header.frame_id = ROBOT_BASE_TF_FRAME
-        msg.object_id = str(detection.object_id)
-        msg.class_name = str(detection.class_name)
-        msg.state = str(detection.state)
-        msg.confidence = float(detection.confidence)
+        layout_id = (
+            "" if detection.layout_id is None else str(detection.layout_id).strip()
+        )
+        msg.object_id = layout_id or f"detection_{int(detection.detection_id)}"
+        class_name = str(detection.classified_class).strip()
+        if not class_name and detection.yolo_class is not None:
+            class_name = str(detection.yolo_class).strip()
+        msg.class_name = class_name or "unknown"
+        state = getattr(detection.state, "name", detection.state)
+        msg.state = (str(state).strip() if state is not None else "") or "unknown"
+        confidence = float(detection.confidence)
+        msg.confidence = (
+            float(np.clip(confidence, 0.0, 1.0))
+            if np.isfinite(confidence)
+            else 0.0
+        )
+
+        if not detection.pose_valid:
+            msg.pose.orientation.w = 1.0
+            msg.pose_valid = False
+            return msg
 
         python_pose = detection.pose
-        input_pose_valid = bool(detection.pose_valid)
-
         camera_pose = PoseStamped()
         camera_pose.header.stamp = stamp
         camera_pose.header.frame_id = ROBOT_CAMERA_TF_FRAME
@@ -221,25 +310,16 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             camera_pose.pose.position.z,
         ) = (float(value) for value in python_pose.position)
 
-        orientation_missing = python_pose.orientation is None
-        if orientation_missing:
-            camera_pose.pose.orientation.w = 1.0
-        else:
-            (
-                camera_pose.pose.orientation.x,
-                camera_pose.pose.orientation.y,
-                camera_pose.pose.orientation.z,
-                camera_pose.pose.orientation.w,
-            ) = (float(value) for value in python_pose.orientation)
+        (
+            camera_pose.pose.orientation.x,
+            camera_pose.pose.orientation.y,
+            camera_pose.pose.orientation.z,
+            camera_pose.pose.orientation.w,
+        ) = (float(value) for value in python_pose.orientation)
 
         base_pose = do_transform_pose_stamped(camera_pose, transform)
         msg.pose = base_pose.pose
-        if orientation_missing:
-            msg.pose.orientation.x = 0.0
-            msg.pose.orientation.y = 0.0
-            msg.pose.orientation.z = 0.0
-            msg.pose.orientation.w = 1.0
-        msg.pose_valid = input_pose_valid
+        msg.pose_valid = True
 
         return msg
 
