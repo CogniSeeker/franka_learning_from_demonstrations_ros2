@@ -32,8 +32,9 @@ DETECTED_OBJECT_TOPIC = "/perception/detected_object"
 ROBOT_BASE_TF_FRAME = "panda_link0"
 ROBOT_CAMERA_TF_FRAME = "camera2_link"
 
-CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
-CAMERA_INFO_TOPIC = "/camera/color/camera_info"
+CAMERA_COLOR_TOPIC = "/camera2/color/image_raw"
+CAMERA_INFO_TOPIC = "/camera2/color/camera_info"
+CURRENT_POSE_TOPIC = "/panda/curr_pose"
 CAMERA_WARMUP_SECONDS = 3.0
 
 
@@ -56,7 +57,7 @@ class PerceptionModuleWrapper:
 
     The loaded model must provide:
 
-      inference(bgr_image, camera_info) -> list[DeckItem] | Deck
+      inference(bgr_image, camera_info) -> list[DetectedObject] | Deck
     """
 
     def __init__(
@@ -96,18 +97,56 @@ class PerceptionModuleWrapper:
         )
         if not isinstance(detections, list):
             raise TypeError(
-                "perception inference must return a Deck or a Python list of DeckItem"
+                "perception inference must return a Deck or a Python list of detections"
             )
         return detections
+
+    def set_visualization_end_effector_pose(self, pose: Any) -> None:
+        """Forward an optional base-referenced EE pose to supporting models."""
+        setter = getattr(self._model, "set_visualization_end_effector_pose", None)
+        if callable(setter):
+            setter(
+                {
+                    "translation_xyz_m": [pose.position.x, pose.position.y, pose.position.z],
+                    "quaternion_xyzw": [
+                        pose.orientation.x,
+                        pose.orientation.y,
+                        pose.orientation.z,
+                        pose.orientation.w,
+                    ],
+                }
+            )
+
+    def set_visualization_camera_transform(self, transform: Any) -> None:
+        """Forward T_camera_link_optical from TF2 to supporting models."""
+        setter = getattr(self._model, "set_visualization_camera_transform", None)
+        if callable(setter):
+            translation = transform.translation
+            rotation = transform.rotation
+            setter(
+                {
+                    "translation_xyz_m": [
+                        translation.x,
+                        translation.y,
+                        translation.z,
+                    ],
+                    "quaternion_xyzw": [
+                        rotation.x,
+                        rotation.y,
+                        rotation.z,
+                        rotation.w,
+                    ],
+                }
+            )
 
 
 class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
     """Transform and publish detections returned by the perception package.
 
-    The perception module is expected to return a Deck or a list of DeckItem.
+    The perception module is expected to return a Deck or a list of detections.
 
-    Camera frames are passed to the model automatically. DeckItem interaction
-    poses use the optical frame from CameraInfo. The batch retains the image
+    Camera frames are passed to the model automatically. Adapted interaction
+    poses use the model's configured output frame. The batch retains the image
     timestamp and waits until the corresponding camera-to-base TF is buffered.
     """
 
@@ -129,11 +168,13 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         )
         self._bridge = CvBridge()
         self._camera_info: CameraInfo | None = None
+        self._current_end_effector_pose: Any | None = None
         self._published_batch = False
         self._pending_batch: tuple[list[Any], Any, str] | None = None
         self._seen_camera_info = False
         self._seen_image = False
         self._waiting_for_camera_info_logged = False
+        self._waiting_for_optical_tf_logged = False
         self._waiting_for_tf_logged = False
         self._camera_warmup_until: float | None = None
 
@@ -154,6 +195,12 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             self._image_callback,
             qos_profile_sensor_data,
         )
+        self._current_pose_subscription = self.create_subscription(
+            PoseStamped,
+            CURRENT_POSE_TOPIC,
+            self._current_pose_callback,
+            5,
+        )
         self._tf_retry_timer = self.create_timer(
             0.02,
             self._try_publish_pending_batch,
@@ -161,8 +208,20 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         self.get_logger().info(
             f"ready; camera warm-up will start with the first image and last "
             f"{CAMERA_WARMUP_SECONDS:.0f}s; "
-            f"subscribed to {CAMERA_COLOR_TOPIC} and {CAMERA_INFO_TOPIC}"
+            f"subscribed to {CAMERA_COLOR_TOPIC}, {CAMERA_INFO_TOPIC}, and "
+            f"{CURRENT_POSE_TOPIC}"
         )
+
+    def _current_pose_callback(self, message: PoseStamped) -> None:
+        """Cache T_panda_link0_end_effector published by the robot controller."""
+        frame_id = message.header.frame_id.strip()
+        if frame_id and frame_id != ROBOT_BASE_TF_FRAME:
+            self.get_logger().warning(
+                f"ignoring {CURRENT_POSE_TOPIC} pose in unexpected frame {frame_id!r}; "
+                f"expected {ROBOT_BASE_TF_FRAME!r} or an empty frame_id"
+            )
+            return
+        self._current_end_effector_pose = message.pose
 
     def _camera_info_callback(self, camera_info: CameraInfo) -> None:
         """Store the latest camera calibration."""
@@ -205,7 +264,40 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
                 self.get_logger().warning("image received; waiting for CameraInfo")
             return
 
+        camera_frame = self._camera_info.header.frame_id.strip()
+        if not camera_frame:
+            self.get_logger().error("CameraInfo has an empty frame_id")
+            return
+        if not self.tf_buffer.can_transform(
+            ROBOT_CAMERA_TF_FRAME,
+            camera_frame,
+            Time(),
+            timeout=Duration(seconds=0),
+        ):
+            if not self._waiting_for_optical_tf_logged:
+                self._waiting_for_optical_tf_logged = True
+                self.get_logger().warning(
+                    f"waiting for RealSense TF {ROBOT_CAMERA_TF_FRAME} <- "
+                    f"{camera_frame} on /tf_static"
+                )
+            return
+
+        link_from_optical = self.tf_buffer.lookup_transform(
+            ROBOT_CAMERA_TF_FRAME,
+            camera_frame,
+            Time(),
+            timeout=Duration(seconds=0),
+        )
+        if self._waiting_for_optical_tf_logged:
+            self.get_logger().info("camera link-to-optical TF is now available")
+            self._waiting_for_optical_tf_logged = False
+        self._model.set_visualization_camera_transform(link_from_optical.transform)
+
         bgr_image = self._bridge.imgmsg_to_cv2(image, "bgr8")
+        if self._current_end_effector_pose is not None:
+            self._model.set_visualization_end_effector_pose(
+                self._current_end_effector_pose
+            )
         self.get_logger().info("starting perception inference")
         started = time.perf_counter()
         try:
@@ -226,10 +318,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         self._pending_batch = (
             detections,
             image.header.stamp,
-            # TODO: this way it forces it to run panda_a404_calib to publish TF2.
-            # Rewrite if needed
-            # self._camera_info.header.frame_id or ROBOT_CAMERA_TF_FRAME,
-            ROBOT_CAMERA_TF_FRAME
+            camera_frame,
         )
 
     def _try_publish_pending_batch(self) -> None:
@@ -264,7 +353,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             timeout=Duration(seconds=0),
         )
 
-        self.publish_detections(detections, transform, stamp)
+        self.publish_detections(detections, transform, stamp, camera_frame)
         self._pending_batch = None
         self._published_batch = True
 
@@ -273,18 +362,25 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         detection: Any,
         transform: Any,
         stamp: Any,
+        camera_frame: str,
     ) -> DetectedObjectMsg:
-        """Encode one deck_scene.models.DeckItem as a ROS message."""
+        """Encode one adapted perception detection as a ROS message."""
         msg = DetectedObjectMsg()
         msg.header.stamp = stamp
         msg.header.frame_id = ROBOT_BASE_TF_FRAME
-        layout_id = (
-            "" if detection.layout_id is None else str(detection.layout_id).strip()
-        )
-        msg.object_id = layout_id or f"detection_{int(detection.detection_id)}"
-        class_name = str(detection.classified_class).strip()
-        if not class_name and detection.yolo_class is not None:
-            class_name = str(detection.yolo_class).strip()
+        object_id = str(getattr(detection, "object_id", "")).strip()
+        if not object_id:
+            layout_id = getattr(detection, "layout_id", None)
+            object_id = "" if layout_id is None else str(layout_id).strip()
+        if not object_id:
+            object_id = f"detection_{int(detection.detection_id)}"
+        msg.object_id = object_id
+        class_name = str(getattr(detection, "class_name", "")).strip()
+        if not class_name:
+            class_name = str(getattr(detection, "classified_class", "")).strip()
+        yolo_class = getattr(detection, "yolo_class", None)
+        if not class_name and yolo_class is not None:
+            class_name = str(yolo_class).strip()
         msg.class_name = class_name or "unknown"
         state = getattr(detection.state, "name", detection.state)
         msg.state = (str(state).strip() if state is not None else "") or "unknown"
@@ -303,7 +399,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         python_pose = detection.pose
         camera_pose = PoseStamped()
         camera_pose.header.stamp = stamp
-        camera_pose.header.frame_id = ROBOT_CAMERA_TF_FRAME
+        camera_pose.header.frame_id = camera_frame
         (
             camera_pose.pose.position.x,
             camera_pose.pose.position.y,
@@ -328,6 +424,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
         detections: list[Any],
         transform: Any,
         stamp: Any,
+        camera_frame: str,
     ) -> int:
         """Transform and publish one ROS message per Python detection.
 
@@ -335,6 +432,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
             detections: Results from the perception function.
             transform: ROS transform from the camera to panda_link0.
             stamp: ROS builtin_interfaces/Time of the source image.
+            camera_frame: Optical frame in which perception returned poses.
 
         Returns:
             Number of messages published.
@@ -347,6 +445,7 @@ class TeleportDetectionService(CustomTransformListener, SpinningRosNode):
                 detection,
                 transform,
                 stamp,
+                camera_frame,
             )
             self._publisher.publish(msg)
 

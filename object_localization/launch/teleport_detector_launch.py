@@ -35,7 +35,8 @@ def generate_launch_description():
                 "launch",
                 "camera_launch.py"
             )
-        )
+        ),
+        launch_arguments={"camera_name": "camera2"}.items(),
     )
 
     return LaunchDescription([

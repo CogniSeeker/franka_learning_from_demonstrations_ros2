@@ -8,6 +8,7 @@ from tf2_ros import TransformBroadcaster
 import rclpy
 import threading
 from geometry_msgs.msg import PoseStamped
+from sensor_msgs.msg import JointState
 from std_msgs.msg import Float32MultiArray
 from geometry_msgs.msg import PoseStamped, Pose, Point, Quaternion
 # from franka_gripper.msg import GraspActionGoal, HomingActionGoal, StopActionGoal, MoveActionGoal
@@ -56,6 +57,11 @@ LOAD_INERTIA = [0.001, 0.0, 0.0,
                 0.0, 0.0025, 0.0,
                 0.0, 0.0, 0.0017]  # kg*m^2, row-major 3x3
 LOAD_MASS = False
+
+JOINT_NAMES = [f"panda_joint{i}" for i in range(1, 8)] + [
+    "panda_finger_joint1",
+    "panda_finger_joint2",
+]
 
 class Panda():
     def __init__(self,
@@ -121,6 +127,7 @@ class Panda():
 
         self.create_subscription(PoseStamped, "/panda/goal_pose", self.external_call, 5)
         self.curr_pose_pub = self.create_publisher(PoseStamped, "/panda/curr_pose", 5)
+        self.joint_state_pub = self.create_publisher(JointState, "/joint_states", 10)
 
         self.tf_broadcaster = TransformBroadcaster(self)
         time.sleep(1)
@@ -619,9 +626,19 @@ class Panda():
 
     def feedback_thread(self):
         while rclpy.ok():
+            state = self.panda.get_state()
             pos = self.curr_pos
             ori = self.curr_ori_xyzw
             self.curr_pose_pub.publish(PoseStamped(pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(x=ori[0], y=ori[1], z=ori[2], w=ori[3]))))
+
+            finger_position = float(self.gripper_state.width) / 2.0
+            joint_state = JointState()
+            joint_state.header.stamp = self.get_clock().now().to_msg()
+            joint_state.name = JOINT_NAMES
+            joint_state.position = list(map(float, state.q)) + [finger_position] * 2
+            joint_state.velocity = list(map(float, state.dq)) + [0.0] * 2
+            joint_state.effort = list(map(float, state.tau_J)) + [0.0] * 2
+            self.joint_state_pub.publish(joint_state)
             time.sleep(0.1)
 
     def gripper_state_thread(self):
@@ -630,6 +647,7 @@ class Panda():
             self.gripper_state = self.gripper.read_once()
 
     def start(self):
+        self.gripper_state = self.gripper.read_once() # Initialize gripper state
         ctrl_thread = threading.Thread(target=self.ctrl_node, daemon=True)
         ctrl_thread.start()
         if not DIRECT_STIFFNESS_OPTION:
@@ -641,7 +659,6 @@ class Panda():
         feedback_thread.start()
         external_call_handler = threading.Thread(target=self.external_call_handler, daemon=True)
         external_call_handler.start()
-        self.gripper_state = self.gripper.read_once() # Initialize gripper state
         gripper_read_thread = threading.Thread(target=self.gripper_state_thread, daemon=True)
         gripper_read_thread.start()
 
@@ -675,4 +692,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

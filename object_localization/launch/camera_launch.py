@@ -16,6 +16,7 @@ CAMERA_SERIAL_NO = '"105322250885"' # table camera near PC # camera2_link from p
 def generate_launch_description():
     log_level = DeclareLaunchArgument("log_level", default_value="warn")
     serial_no = DeclareLaunchArgument("serial_no", default_value=CAMERA_SERIAL_NO)
+    camera_name = DeclareLaunchArgument("camera_name", default_value="camera2")
 
     # Include the Realsense camera launch file with resolution parameters
     realsense_launch = IncludeLaunchDescription(
@@ -27,6 +28,7 @@ def generate_launch_description():
             )
         ),
         launch_arguments={
+            "camera_name": LaunchConfiguration("camera_name"),
             "rgb_camera.profile": "1280,720,30",
             "depth_module.profile": "848,480,30",
             "log_level": "info",
@@ -46,6 +48,7 @@ def generate_launch_description():
     return LaunchDescription([
         log_level,
         serial_no,
+        camera_name,
         realsense_launch,
         # camera_tf_publisher_node
     ])
