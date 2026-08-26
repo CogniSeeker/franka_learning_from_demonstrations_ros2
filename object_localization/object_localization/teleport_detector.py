@@ -30,10 +30,10 @@ from skills_manager.ros_utils import SpinningRosNode
 DETECTED_OBJECT_TOPIC = "/perception/detected_object"
 
 ROBOT_BASE_TF_FRAME = "panda_link0"
-ROBOT_CAMERA_TF_FRAME = "camera2_link"
+ROBOT_CAMERA_TF_FRAME = "camera3_link"
 
-CAMERA_COLOR_TOPIC = "/camera2/color/image_raw"
-CAMERA_INFO_TOPIC = "/camera2/color/camera_info"
+CAMERA_COLOR_TOPIC = "/camera3/color/image_raw"
+CAMERA_INFO_TOPIC = "/camera3/color/camera_info"
 CURRENT_POSE_TOPIC = "/panda/curr_pose"
 CAMERA_WARMUP_SECONDS = 3.0
 
