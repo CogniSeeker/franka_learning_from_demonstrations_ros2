@@ -64,7 +64,7 @@ This increases the reliability of critical picking and insertion tasks.
 For executing the skill you can run the active localizer in one terminal and the skill manager in another terminal. 
 
 ```bash
-ros2 launch object_localization box_localization_launch.py
+ros2 launch object_localization localization_launch.py
 ```
 
 ```bash

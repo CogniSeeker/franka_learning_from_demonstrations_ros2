@@ -1,6 +1,28 @@
+from typing import NamedTuple, Optional
+
 import numpy as np
 import cv2
-MIN_MATCH_COUNT = 2
+MIN_MATCH_COUNT = 8
+
+
+class Match(NamedTuple):
+    """One template located in the current image. Pure image space, no frames.
+
+    u, v     pixel of the object in the *current* image: the template's
+             crop-box centre mapped through the fitted affine.
+    scale    s = Z_template / Z_now. Greater than 1 means the object appears
+             larger than in the template, i.e. closer to the camera.
+    yaw      rotation in image coordinates (radians), RELATIVE to the template
+             capture orientation. That reference is recorded nowhere, so this is
+             "how far it turned since the template was taken", not a heading.
+    inliers  points accepted by estimateAffinePartial2D's RANSAC.
+    """
+    u: float
+    v: float
+    scale: float
+    yaw: float
+    inliers: int
+
 
 class Localizer(object):
 
@@ -14,10 +36,37 @@ class Localizer(object):
         self._template = self._full_template[
             cropped_h[0] : cropped_h[1], cropped_w[0] : cropped_w[1]
         ]
-        self.delta_translation = np.float32([
+        self.delta_translation = np.array([
             cropped_w[0],
             cropped_h[0],
-        ])
+        ], dtype=np.float32)
+        # Centre of the crop box, in FULL-template coordinates. You drew that box
+        # around the object when capturing the template, so its centre is the
+        # object centre by construction -- unlike a keypoint centroid, which
+        # drifts toward whichever side happens to be textured.
+        self._crop_centre = np.array([
+            0.5 * (cropped_w[0] + cropped_w[1]),
+            0.5 * (cropped_h[0] + cropped_h[1]),
+        ], dtype=np.float32)
+
+        self._sift = cv2.SIFT_create()
+        self._flann = cv2.FlannBasedMatcher(
+            dict(algorithm=0, trees=5),  # FLANN_INDEX_KDTREE
+            dict(checks=100),
+        )
+        # The template image never changes, so detect on it once per instance
+        # instead of once per frame. Keypoints are shifted into full-template
+        # coordinates here, so detect_points must not shift them again.
+        self._kp_template, self._des_template = self._sift.detectAndCompute(self._template, None)
+        for keypoint in self._kp_template:
+            keypoint.pt = (
+                keypoint.pt[0] + self.delta_translation[0],
+                keypoint.pt[1] + self.delta_translation[1],
+            )
+
+        self._src_pts = None
+        self._dst_pts = None
+        self._annoted_image = None
 
     def set_image(self, img) -> None:
         self._img = img
@@ -30,23 +79,23 @@ class Localizer(object):
         self._pixel_m_factor_v =  self._fy / self._box_depth
 
     def detect_points(self):
+        # Clear last frame's result first. Instances are reused now, so leaving
+        # stale _src_pts behind would let a template that matched once keep
+        # reporting that old position forever.
+        self._src_pts = None
+        self._dst_pts = None
+        self._annoted_image = None
+
         gray = cv2.cvtColor(self._img, cv2.COLOR_BGR2GRAY)
 
-        # initiate SIFT detector
-        sift = cv2.SIFT_create()
-
-        # find the keypoints and descriptors with SIFT
-        kp1, des1 = sift.detectAndCompute(self._template, None)
-        kp2, des2 = sift.detectAndCompute(gray, None)
-
-        FLANN_INDEX_KDTREE = 0
-        index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-        search_params = dict(checks=100)
-
-        flann = cv2.FlannBasedMatcher(index_params, search_params)
+        kp1, des1 = self._kp_template, self._des_template
+        kp2, des2 = self._sift.detectAndCompute(gray, None)
+        if des1 is None or des2 is None or len(des2) < 2:
+            print("WARNING: LOCALIZER NOT FOUND TEMPLATE!", flush=True)
+            return
 
         # find matches by knn which calculates point distance in 128 dim
-        matches = flann.knnMatch(des1, des2, k=2)
+        matches = self._flann.knnMatch(des1, des2, k=2)
 
         # store all the good matches as per Lowe's ratio test.
         good = []
@@ -54,16 +103,12 @@ class Localizer(object):
             if m.distance < 0.7 * n.distance:
                 good.append(m)
 
-        # translate keypoints back to full source template
-        for k in kp1:
-            k.pt = (k.pt[0] + self.delta_translation[0], k.pt[1] + self.delta_translation[1])
-
-
         if len(good) > MIN_MATCH_COUNT:
             self._src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
             self._dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
         else:
             print("WARNING: LOCALIZER NOT FOUND TEMPLATE!", flush=True)
+            return
 
         try:
             M, mask = cv2.findHomography(self._src_pts, self._dst_pts, cv2.RANSAC, 5.0)
@@ -75,17 +120,51 @@ class Localizer(object):
                 flags=2,
             )
             self._annoted_image = cv2.drawMatches(self._full_template, kp1, self._img, kp2, good, None, **draw_params)
-            
+
         except Exception as e:
             print("error orccured", e, flush=True)
 
     def annoted_image(self):
         return self._annoted_image
 
+    def measure_object(self) -> Optional[Match]:
+        """Locate the object in the current image. Call after detect_points().
+
+        Returns None when there is nothing to measure. Deliberately separate
+        from compute_full_tf_in_m: that one builds a *servo delta* from
+        principal-point-centred coordinates, which destroys the absolute
+        translation term needed here, and discards the affine's scale.
+        """
+        if self._src_pts is None or self._dst_pts is None:
+            return None
+
+        affine, inlier_mask = cv2.estimateAffinePartial2D(self._src_pts, self._dst_pts)
+        if affine is None:
+            return None
+
+        linear = affine[0:2, 0:2]
+        # estimateAffinePartial2D returns [s*R | t] -- 4 DOF. det(s*R) = s^2.
+        scale = float(np.sqrt(abs(np.linalg.det(linear))))
+        if scale <= 0.0:
+            return None
+
+        centre = linear @ self._crop_centre + affine[0:2, 2]
+        return Match(
+            u=float(centre[0]),
+            v=float(centre[1]),
+            scale=scale,
+            yaw=float(np.arctan2(affine[1, 0], affine[0, 0])),
+            inliers=int(inlier_mask.sum()) if inlier_mask is not None else 0,
+        )
+
+    def template_range(self) -> float:
+        """Camera-to-object range assumed when the template was captured (m)."""
+        return float(self._box_depth)
+
     def compute_tf(self) -> np.ndarray:
 
         p0 = np.transpose(np.array(self._src_pts))[:, 0, :] - self.cx_cy_array
-        p1 = np.transpose(np.array(self._dst_pts))[:, 0, :] - self.cx_cy_array 
+        p1 = np.transpose(np.array(self._dst_pts))[:, 0, :] - self.cx_cy_array
         T0 = compute_transform(p0, p1) #this matrix is a 3x3
 
         return T0
@@ -98,13 +177,10 @@ class Localizer(object):
         T[0:2, 0:2] = T0[0:2, 0:2]
         T[0:2, 3] = T0[0:2, 2]
         return T
-    
+
 def compute_transform(points: np.ndarray, transformed_points: np.ndarray):
     assert isinstance(points, np.ndarray)
     assert isinstance(transformed_points, np.ndarray)
     assert points.shape == transformed_points.shape
     cv2_matrix, _ = cv2.estimateAffinePartial2D(points.T, transformed_points.T)
     return cv2_matrix
-
-
-

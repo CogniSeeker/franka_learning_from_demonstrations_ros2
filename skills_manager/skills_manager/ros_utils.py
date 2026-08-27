@@ -1,6 +1,6 @@
 
 from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor, SingleThreadedExecutor
+from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor, SingleThreadedExecutor
 import threading
 
 from rclpy.callback_groups import ReentrantCallbackGroup
@@ -57,6 +57,9 @@ class SpinningRosNode(Node):
     def _spin(self):
         # Small timeout makes the thread yield regularly.
         # 0.01 is a good starting point.
-        while rclpy.ok():
-            self._executor.spin_once(timeout_sec=0.01)
+        try:
+            while rclpy.ok():
+                self._executor.spin_once(timeout_sec=0.01)
+        except ExternalShutdownException:
+            pass  # rclpy.shutdown() from the main thread ends the loop
 
