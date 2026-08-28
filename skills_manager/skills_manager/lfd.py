@@ -38,6 +38,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.curr_image = None
         self.recorded_traj = None
         self.recorded_ori_wxyz = None
+        self.recorded_stamp_ns = None
         self.loaded_traj = None
         self.loaded_ori_qxyz = None
 
@@ -67,7 +68,12 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         return self.time_index / self.loaded_trajectory_len
 
-    def traj_rec(self, trigger: float = 0.005, roll_redution_alpha: float = 0.4):
+    def traj_rec(
+        self,
+        trigger: float = 0.005,
+        roll_redution_alpha: float = 0.4,
+        record_images: bool = True,
+    ):
         """ Demonstrate a trajectory with either joystic, gestures, or kinesthetic teaching.
         Fills: 
             self.recorded_traj
@@ -79,6 +85,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
 
         Args:
             roll_reduction_alpha: float. When controlled externally (joystick/gestures), we let roll->0 as the user cannot control it.
+            record_images: Keep the legacy downsampled grayscale stream. Disable
+                it when another recorder already saves full-resolution images.
         """
         self.signalizer.signalize_ready_demonstration()
 
@@ -94,6 +102,7 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         while vel < trigger:
             if self.end:
                 break
+            self.update_additional_flags()
             self.r.sleep()
 
             if self.is_applied_external_feedback(): # feedback changed and not kinesthetic teaching
@@ -106,10 +115,13 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
         self.recorded_traj = self.curr_pos
         self.recorded_ori_wxyz = self.curr_ori_wxyz
         self.recorded_gripper= self.grip_value
+        self.recorded_stamp_ns = np.array(
+            [self.get_clock().now().nanoseconds], dtype=np.int64
+        )
         self.recorded_img_feedback_flag = np.array([0])
         self.recorded_spiral_flag = np.array([0])
         self.init_additional_flags()
-        self.recorded_img = self.pub_rec_image()
+        self.recorded_img = self.pub_rec_image() if record_images else None
 
         self.signalizer.signalize_demonstration()
         print("Recording started. Press e to stop.")
@@ -121,7 +133,11 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
             self.recorded_traj = np.c_[self.recorded_traj, self.curr_pos]
             self.recorded_ori_wxyz  = np.c_[self.recorded_ori_wxyz, self.curr_ori_wxyz]
             self.recorded_gripper = np.c_[self.recorded_gripper, self.grip_value]
-            self.recorded_img = np.r_[self.recorded_img, self.pub_rec_image()]
+            self.recorded_stamp_ns = np.append(
+                self.recorded_stamp_ns, self.get_clock().now().nanoseconds
+            )
+            if record_images:
+                self.recorded_img = np.r_[self.recorded_img, self.pub_rec_image()]
             
             self.recorded_img_feedback_flag = np.c_[self.recorded_img_feedback_flag, self.img_feedback_flag]
             self.recorded_spiral_flag = np.c_[self.recorded_spiral_flag, self.spiral_flag]
@@ -220,7 +236,8 @@ class LfD(Feedback, Panda, Insertion, Transform, CameraFeedback, SpinningRosNode
                  traj=self.recorded_traj,
                  ori=self.recorded_ori_wxyz,
                  grip=self.recorded_gripper,
-                 img=self.recorded_img, 
+                 img=self.recorded_img,
+                 stamp_ns=self.recorded_stamp_ns,
                  img_feedback_flag=self.recorded_img_feedback_flag,
                  spiral_flag=self.recorded_spiral_flag)
         return True

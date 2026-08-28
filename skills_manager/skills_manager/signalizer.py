@@ -11,9 +11,19 @@ class Signalizator:
     COLOR_DEMONSTRATION = "#f1c40f" # yellow
     COLOR_DEMONSTRATION_READY = "#bb9b1d" # yellow
     COLOR_EXECUTION = "#2ecc71"     # green
+    COLOR_TELEOPERATING = "#22d3ee" # cyan
+    COLOR_BUTTON_PRESSED = "#f59e0b" # amber
+    COLOR_DATA_SAVED = "#22c55e"    # green
+    COLOR_ERROR = "#ef4444"         # red
 
     def __init__(self, fullscreen=True, monitor_offset_x=0, size="400x200"):
-        self.root = tk.Tk()
+        try:
+            self.root = tk.Tk()
+        except tk.TclError:
+            # Headless launches still receive the mirrored ANSI status logs.
+            self.root = None
+            self.label = None
+            return
         self.root.title("Robot status")
 
         saved_geometry = self._load_geometry()
@@ -87,10 +97,22 @@ class Signalizator:
 
     def _set_state(self, text: str, color: str):
         """Internal helper to change background + text."""
-        self.root.configure(bg=color)
-        self.label.configure(text=text, bg=color, fg="black")
-        # Ensure redraw happens immediately if called while running
-        self.root.update_idletasks()
+        if self.root is None:
+            return
+        try:
+            self.root.configure(bg=color)
+            self.label.configure(text=text, bg=color, fg="black")
+            # Ensure redraw happens immediately if called while running
+            self.root.update_idletasks()
+            self.root.update()
+        except tk.TclError:
+            # The status is mirrored in ANSI logs, so a manually closed GUI
+            # must not stop the robot capture workflow.
+            self.root = None
+
+    def signalize_status(self, state: str, step: int, total: int, color: str):
+        """Display an operator-facing state and capture progress."""
+        self._set_state(f"{state}\n{step} / {total}", color)
 
     def signalize_demonstration(self):
         self._set_state("IS\nDEMONSTRATING", self.COLOR_DEMONSTRATION)
@@ -106,11 +128,18 @@ class Signalizator:
 
     def run(self):
         """Blocking call – starts the event loop."""
-        self.root.mainloop()
+        if self.root is not None:
+            self.root.mainloop()
 
     def close(self):
-        if self.root is not None and self.root.winfo_exists():
-            self.root.after(0, self.root.destroy)
+        if self.root is None:
+            return
+        try:
+            if self.root.winfo_exists():
+                self.root.destroy()
+        except tk.TclError:
+            pass
+        self.root = None
 
 
 if __name__ == "__main__":

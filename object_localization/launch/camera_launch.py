@@ -17,6 +17,7 @@ def generate_launch_description():
     log_level = DeclareLaunchArgument("log_level", default_value="warn")
     serial_no = DeclareLaunchArgument("serial_no", default_value=CAMERA_SERIAL_NO)
     camera_name = DeclareLaunchArgument("camera_name", default_value="camera3")
+    enable_sync = DeclareLaunchArgument("enable_sync", default_value="true")
 
     # Include the Realsense camera launch file with resolution parameters
     realsense_launch = IncludeLaunchDescription(
@@ -31,6 +32,9 @@ def generate_launch_description():
             "camera_name": LaunchConfiguration("camera_name"),
             "rgb_camera.profile": "1280,720,30",
             "depth_module.profile": "848,480,30",
+            "enable_color": "true",
+            "enable_depth": "true",
+            "enable_sync": LaunchConfiguration("enable_sync"),
             "log_level": "info",
             "initial_reset": "true",
             "serial_no": LaunchConfiguration("serial_no"),
@@ -49,6 +53,7 @@ def generate_launch_description():
         log_level,
         serial_no,
         camera_name,
+        enable_sync,
         realsense_launch,
         # camera_tf_publisher_node
     ])

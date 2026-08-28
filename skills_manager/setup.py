@@ -26,10 +26,10 @@ setup(
             "home = skills_manager.home:main",
             "record_skill = skills_manager.record_skill:main",
             "play_skill = skills_manager.play_skill:main",
+            "workspace_capture = skills_manager.workspace_capture:main",
         ],
     },
 )
-
 
 
 

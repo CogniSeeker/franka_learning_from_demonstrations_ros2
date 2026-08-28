@@ -59,6 +59,23 @@ During demonstration the robot is recording the Cartesian pose of the robot and 
 During execution, the robot tracks the recorded trajectory while trying to correct for the discrepancy between the current image at that timestep and the one recorded during demonstration.
 This increases the reliability of critical picking and insertion tasks. 
 
+### Robot-mounted workspace capture
+
+Build and source the whole workspace, then start the hand camera, corrected
+camera calibration, Panda controller, and recorder with one command:
+
+```bash
+ros2 launch skills_manager workspace_capture_launch.py steps:=300
+```
+
+The robot homes before kinesthetic mode is enabled. Move it by hand, hold it
+still, and press the Franka **Check** button to save a synchronized RGB-D step.
+Press **Circle** to finish early after any active step has been written. Sessions
+are stored below `$ROS_HOME/workspace_captures/`; use
+`output_dir:=/absolute/new/session/path` to select an exact session directory.
+
+**TODO:** after "Finish" button is pressed on the robot, it finishes with error.
+
 ### Execute Learned Skill
 
 For executing the skill you can run the active localizer in one terminal and the skill manager in another terminal. 

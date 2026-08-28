@@ -63,6 +63,37 @@ JOINT_NAMES = [f"panda_joint{i}" for i in range(1, 8)] + [
     "panda_finger_joint2",
 ]
 
+
+def _feedback_messages(state, gripper_width, stamp):
+    """Build pose and joints from one libfranka RobotState sample."""
+    base_from_ee = np.asarray(state.O_T_EE, dtype=float).reshape(
+        (4, 4), order="F"
+    )
+    pos = base_from_ee[:3, 3]
+    orientation = quaternion.from_rotation_matrix(base_from_ee[:3, :3])
+    current_pose = PoseStamped(
+        pose=Pose(
+            position=Point(x=pos[0], y=pos[1], z=pos[2]),
+            orientation=Quaternion(
+                x=orientation.x,
+                y=orientation.y,
+                z=orientation.z,
+                w=orientation.w,
+            ),
+        )
+    )
+    current_pose.header.stamp = stamp
+    current_pose.header.frame_id = "panda_link0"
+
+    finger_position = float(gripper_width) / 2.0
+    joint_state = JointState()
+    joint_state.header.stamp = stamp
+    joint_state.name = JOINT_NAMES
+    joint_state.position = list(map(float, state.q)) + [finger_position] * 2
+    joint_state.velocity = list(map(float, state.dq)) + [0.0] * 2
+    joint_state.effort = list(map(float, state.tau_J)) + [0.0] * 2
+    return current_pose, joint_state
+
 class Panda():
     def __init__(self,
                  K_pos: int = 1000, # Default Positional stiffness
@@ -627,17 +658,11 @@ class Panda():
     def feedback_thread(self):
         while rclpy.ok():
             state = self.panda.get_state()
-            pos = self.curr_pos
-            ori = self.curr_ori_xyzw
-            self.curr_pose_pub.publish(PoseStamped(pose=Pose(position=Point(x=pos[0], y=pos[1], z=pos[2]), orientation=Quaternion(x=ori[0], y=ori[1], z=ori[2], w=ori[3]))))
-
-            finger_position = float(self.gripper_state.width) / 2.0
-            joint_state = JointState()
-            joint_state.header.stamp = self.get_clock().now().to_msg()
-            joint_state.name = JOINT_NAMES
-            joint_state.position = list(map(float, state.q)) + [finger_position] * 2
-            joint_state.velocity = list(map(float, state.dq)) + [0.0] * 2
-            joint_state.effort = list(map(float, state.tau_J)) + [0.0] * 2
+            stamp = self.get_clock().now().to_msg()
+            current_pose, joint_state = _feedback_messages(
+                state, self.gripper_state.width, stamp
+            )
+            self.curr_pose_pub.publish(current_pose)
             self.joint_state_pub.publish(joint_state)
             time.sleep(0.1)
 
