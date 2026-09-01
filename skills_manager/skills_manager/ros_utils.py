@@ -36,7 +36,12 @@ class SpinningRosNode(Node):
     def __init__(self):
         super().__init__(f"panda_node_{np.random.randint(100000)}")
 
-        self._executor = SingleThreadedExecutor()
+        # NOTE: MultiThreadedExecutor is required so that synchronous service
+        # calls made *inside* a callback (e.g. set_remote_parameters ->
+        # client.call()) don't deadlock the single spin thread.
+        # To revert to the previous behaviour, swap the two lines below.
+        self._executor = MultiThreadedExecutor(num_threads=4)
+        # self._executor = SingleThreadedExecutor()
         self._executor.add_node(self)
 
         self._spin_thread = threading.Thread(target=self._spin, daemon=True)

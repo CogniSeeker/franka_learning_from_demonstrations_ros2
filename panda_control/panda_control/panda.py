@@ -500,7 +500,7 @@ class Panda():
         if not self.break_control_done.wait(timeout=timeout):
             raise Exception("Restart request not finished in time!")
 
-    def ctrl_node(self, frequency=500):
+    def ctrl_node(self, frequency=1000):
         while True:
             if self.go_home_flag:
                 # self.panda.move_to_start()

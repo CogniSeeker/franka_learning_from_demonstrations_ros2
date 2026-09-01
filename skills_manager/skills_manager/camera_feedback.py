@@ -9,6 +9,17 @@ from cv_bridge import CvBridgeError, CvBridge
 CAMERA_INFO_TOPIC = "/camera/color/camera_info"
 CAMERA_COLOR_TOPIC = "/camera/color/image_raw"
 
+def center_crop(image, crop_size=448, out_size=224):
+    """ Crop the centered crop_size x crop_size region from image, then resize
+        it down to out_size x out_size. Falls back to the largest centered
+        square if the image is smaller than crop_size. """
+    h, w = image.shape[:2]
+    crop = min(crop_size, h, w)
+    row_start = (h - crop) // 2
+    col_start = (w - crop) // 2
+    cropped = image[row_start:row_start + crop, col_start:col_start + crop]
+    return cv2.resize(cropped, (out_size, out_size), interpolation=cv2.INTER_AREA)
+
 def image_process(image, ds_factor, row_crop_top, row_crop_bottom, col_crop_left, col_crop_right):
     if image is None:
         raise Exception("Camera is not sending images!")
@@ -64,6 +75,7 @@ class CameraFeedback():
             cv_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
             self.curr_image = cv_image
+            # self.curr_image = center_crop(cv_image, crop_size=448, out_size=224)
 
         except CvBridgeError as e:
             print(e)

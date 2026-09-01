@@ -760,6 +760,10 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
         import uuid, time
         import numpy as np
         try:
+            npz_path = skill_file or ""
+            if not npz_path.endswith('.npz'):
+                npz_path = npz_path + '.npz'
+
             vid = images
             # Accept (N, H, W) or (N, C, H, W) -> take first channel
             if vid.ndim == 4:
@@ -767,6 +771,24 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
 
             # Ensure memory layout is friendly for cv2 (avoids occasional no-op on subsequent runs)
             vid = np.ascontiguousarray(vid)
+
+            out_path = None
+            if npz_path:
+                stem = os.path.splitext(os.path.basename(npz_path))[0]
+                out_path = os.path.join(os.path.dirname(npz_path), f"{stem}_playback.mp4")
+
+                import cv2
+                writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), 60.0, (vid.shape[2], vid.shape[1]))
+                if writer.isOpened():
+                    for frame in vid:
+                        if frame.ndim == 2:
+                            frame = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+                        else:
+                            frame = frame.astype(np.uint8)
+                        writer.write(frame)
+                    writer.release()
+                else:
+                    raise RuntimeError(f"Could not write {out_path}")
 
             # --- Hard reset OpenCV windows from prior run ---
             try:
@@ -795,7 +817,7 @@ def show_skill(skill_file, port=8090, inline=True, height=520, debug=False):
             except Exception:
                 pass
 
-            return "Finished playing."
+            return f"Saved video to {out_path}. Finished playing." if out_path else f"Finished playing. No video saved."
         except Exception as e:
             print("play_video error:", e)
             return f"Playback error: {e}"
